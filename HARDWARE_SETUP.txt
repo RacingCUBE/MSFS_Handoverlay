@@ -1,0 +1,290 @@
+========================================
+    MSFS Hand Overlay - Hardware Setup
+========================================
+
+CAMERA POSITIONING (Top View):
+===============================
+
+                    ┌──────────────┐
+                    │  Your Head   │
+                    │   (Seated)   │
+                    └──────────────┘
+                          ||
+                          ||
+                    ┌─────▼─────┐
+                    │  Monitor  │
+                    │  /HOTAS   │
+                    └───────────┘
+                          ||
+                    ┌─────▼─────┐
+                    │   Hands   │
+                    │   Area    │
+                    └───────────┘
+                          ▲
+                          │
+                    Green Mat/Cloth
+
+
+CAMERA POSITIONING (Side View):
+================================
+
+                    Ceiling/Mount
+                          │
+                          │
+                  ┌───────┴───────┐
+                  │   Cameras     │  ← 50-70cm above hands
+                  │  [👁] [👁]    │
+                  └───────┬───────┘
+                          │
+                      (pointing down)
+                          │
+                          ▼
+                   ┌──────────────┐
+                   │  Your Hands  │
+                   └──────┬───────┘
+                          │
+                   ┌──────▼───────┐
+                   │  Green Mat   │
+                   └──────────────┘
+
+
+DUAL CAMERA SETUP (Front View):
+================================
+
+   Camera Spacing: 6-8cm apart
+
+        ┌─────┐      ┌─────┐
+        │ CAM │ 6-8cm│ CAM │
+        │  0  │◄────►│  1  │
+        │ LEFT│      │RIGHT│
+        └──┬──┘      └──┬──┘
+           │            │
+           └─────┬──────┘
+                 │
+          (angled down 30-45°)
+                 │
+                 ▼
+         ┌───────────────┐
+         │   Hands Area  │
+         │  (30x40cm)    │
+         └───────────────┘
+
+
+LIGHTING SETUP:
+===============
+
+    ┌──────┐              ┌──────┐
+    │Light │              │Light │
+    │  1   │              │  2   │
+    └───┬──┘              └───┬──┘
+        │                     │
+        └──────┐    ┌─────────┘
+               │    │
+          Even lighting (no shadows)
+               │    │
+               ▼    ▼
+         ┌─────────────┐
+         │ Green Mat   │
+         │             │
+         │   Hands     │
+         └─────────────┘
+
+TIPS:
+- Use soft, diffused lighting
+- Avoid shadows on green screen
+- Bright green works best
+- Keep hands 40-60cm from cameras
+
+
+USB CONNECTION:
+===============
+
+Computer
+  ├─ USB 3.0 Port A ──► Left Camera (Index 0)
+  └─ USB 3.0 Port B ──► Right Camera (Index 1)
+
+NOTES:
+- Use USB 3.0 for better bandwidth
+- Avoid USB hubs if possible
+- Check Device Manager for camera order
+- Test with Windows Camera app first
+
+
+PHYSICAL MOUNTING OPTIONS:
+===========================
+
+Option 1: Overhead Boom Arm
+  - Photography boom arm
+  - Attach both cameras to cross-bar
+  - Adjustable height
+  - ~$30-50
+
+Option 2: Ceiling Mount
+  - L-brackets on ceiling
+  - More permanent
+  - Very stable
+  - ~$10-20
+
+Option 3: Monitor Top Mount
+  - Clip-on mount to top of monitor
+  - Angle downward
+  - Easy to set up
+  - ~$15-25
+
+Option 4: DIY Frame
+  - PVC pipe frame
+  - Freestanding
+  - Portable
+  - ~$20
+
+
+GREEN SCREEN OPTIONS:
+======================
+
+Best to Worst:
+1. Photography green screen fabric (best)
+   - Even color, bright green
+   - No wrinkles
+   - ~$15-30
+
+2. Green felt/fleece
+   - Good color, affordable
+   - Some texture OK
+   - ~$5-10
+
+3. Green poster board
+   - Flat, good for small area
+   - Cheap
+   - ~$2-5
+
+4. Green t-shirt/cloth
+   - OK in a pinch
+   - Watch for wrinkles/shadows
+   - Free (if you have one)
+
+Avoid:
+- Dark green (too similar to shadows)
+- Shiny materials (reflections)
+- Patterned green
+
+
+CAMERA SETTINGS (in Windows):
+==============================
+
+For both cameras, set:
+- Resolution: 640x480 (good balance)
+- Frame Rate: 30 FPS
+- Exposure: Manual (not auto)
+- Auto White Balance: On
+- Auto Focus: Off (fixed focus)
+
+Access via:
+Windows Settings → Cameras → Advanced
+
+
+TESTING YOUR SETUP:
+====================
+
+1. Open Windows Camera app
+2. Check each camera individually
+3. Verify:
+   ✓ Both hands visible
+   ✓ Green screen fills background
+   ✓ No shadows on green
+   ✓ Even lighting
+   ✓ Cameras pointing at same area
+
+4. Adjust position/lighting until good
+
+5. Then run MSFSHandOverlay.exe
+
+
+TROUBLESHOOTING:
+================
+
+Hands cut off:
+→ Move cameras higher or tilt more
+
+Background visible:
+→ Increase HueRange in settings.ini
+→ Improve lighting (reduce shadows)
+
+Hands removed:
+→ Decrease HueRange
+→ Increase SaturationMin
+
+Stereo effect wrong:
+→ Swap camera indices in config
+→ Adjust camera spacing (closer together)
+
+Blurry:
+→ Adjust camera focus
+→ Increase lighting
+→ Clean camera lenses
+
+
+MEASUREMENT GUIDE:
+==================
+
+Camera Height: 50-70cm above hands
+  └─ Too low: Hands outside view
+  └─ Too high: Poor angle
+
+Camera Spacing: 6-8cm apart
+  └─ Too close: Flat 3D
+  └─ Too far: Eye strain
+
+Green Mat Size: 30x40cm minimum
+  └─ Should fill camera view behind hands
+
+Lighting Distance: 30-50cm from green mat
+  └─ Close enough to illuminate
+  └─ Far enough to diffuse
+
+
+EXAMPLE SETUPS:
+===============
+
+Budget Setup (~$50):
+- 2x Logitech C270 webcams
+- Green felt from craft store
+- PVC pipe frame
+- Desk lamps for lighting
+
+Mid-Range Setup (~$150):
+- 2x Logitech C920 webcams
+- Photography green screen
+- Boom arm mount
+- LED panel lights
+
+Premium Setup (~$300+):
+- 2x Logitech Brio 4K webcams
+- Professional green screen
+- Sturdy overhead mount
+- Softbox LED lighting
+
+
+FINAL CHECKLIST:
+================
+
+Hardware:
+□ Two identical USB webcams
+□ Green screen material
+□ Mounting solution
+□ Adequate lighting
+□ USB cables (if needed)
+
+Software:
+□ SteamVR installed
+□ MSFSHandOverlay built
+□ Config file edited
+□ Camera indices verified
+
+Testing:
+□ Both cameras working in Windows Camera app
+□ Green screen visible in camera view
+□ Even lighting, no shadows
+□ Both hands fit in view
+□ No reflection/glare
+
+Ready to fly!

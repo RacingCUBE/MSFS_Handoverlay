@@ -1,0 +1,5 @@
+C:/Users/T4A-4/source/repos/MSFSHandOverlay/MSFSHandOverlay/MSFSHandOverlay/api-layer/build/CMakeFiles/MSFSHandOverlay_Layer.dir
+C:/Users/T4A-4/source/repos/MSFSHandOverlay/MSFSHandOverlay/MSFSHandOverlay/api-layer/build/CMakeFiles/MinimalTestLayer.dir
+C:/Users/T4A-4/source/repos/MSFSHandOverlay/MSFSHandOverlay/MSFSHandOverlay/api-layer/build/CMakeFiles/INSTALL.dir
+C:/Users/T4A-4/source/repos/MSFSHandOverlay/MSFSHandOverlay/MSFSHandOverlay/api-layer/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/T4A-4/source/repos/MSFSHandOverlay/MSFSHandOverlay/MSFSHandOverlay/api-layer/build/CMakeFiles/ZERO_CHECK.dir

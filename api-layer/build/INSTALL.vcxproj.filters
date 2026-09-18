@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\T4A-4\source\repos\MSFSHandOverlay\MSFSHandOverlay\MSFSHandOverlay\api-layer\build\CMakeFiles\b4d1a18d67b20fb3ed11d7b70402b288\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{E2AFC842-7CC1-380D-9811-08FE863CEF64}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

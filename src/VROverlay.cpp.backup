@@ -1,0 +1,358 @@
+#include "VROverlay.h"
+#include "Config.h"
+#include <iostream>
+#include <cmath>
+#include <vector>
+
+VROverlay::VROverlay() {
+}
+
+VROverlay::~VROverlay() {
+    shutdown();
+}
+
+bool VROverlay::initialize(const std::string& appName) {
+    if (!initializeOpenXR(appName)) {
+        return false;
+    }
+
+    if (!createSession()) {
+        shutdownOpenXR();
+        return false;
+    }
+
+    if (!createReferenceSpaces()) {
+        shutdownOpenXR();
+        return false;
+    }
+
+    if (!createSwapchain()) {
+        shutdownOpenXR();
+        return false;
+    }
+
+    m_initialized = true;
+    std::cout << "OpenXR Overlay initialized successfully" << std::endl;
+    return true;
+}
+
+bool VROverlay::initializeOpenXR(const std::string& appName) {
+    // Create OpenXR instance
+    XrInstanceCreateInfo instanceCreateInfo{XR_TYPE_INSTANCE_CREATE_INFO};
+    strncpy_s(instanceCreateInfo.applicationInfo.applicationName, appName.c_str(), XR_MAX_APPLICATION_NAME_SIZE - 1);
+    instanceCreateInfo.applicationInfo.applicationVersion = 1;
+    strncpy_s(instanceCreateInfo.applicationInfo.engineName, "MSFSHandOverlay", XR_MAX_ENGINE_NAME_SIZE - 1);
+    instanceCreateInfo.applicationInfo.engineVersion = 1;
+    instanceCreateInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+
+    // Request D3D11 extension
+    const char* extensions[] = {XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
+    instanceCreateInfo.enabledExtensionCount = 1;
+    instanceCreateInfo.enabledExtensionNames = extensions;
+
+    XrResult result = xrCreateInstance(&instanceCreateInfo, &m_instance);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to create OpenXR instance: " << result << std::endl;
+        return false;
+    }
+
+    // Get system (HMD)
+    XrSystemGetInfo systemGetInfo{XR_TYPE_SYSTEM_GET_INFO};
+    systemGetInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+
+    result = xrGetSystem(m_instance, &systemGetInfo, &m_systemId);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to get OpenXR system: " << result << std::endl;
+        return false;
+    }
+
+    std::cout << "OpenXR instance and system created successfully" << std::endl;
+    return true;
+}
+
+bool VROverlay::createSession() {
+    // Get D3D11 graphics requirements
+    if (!getD3D11GraphicsRequirements()) {
+        return false;
+    }
+
+    // Create D3D11 device if not already created
+    // NOTE: In practice, we should get this from the main application
+    if (!m_d3dDevice) {
+        D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
+        HRESULT hr = D3D11CreateDevice(
+            nullptr,
+            D3D_DRIVER_TYPE_HARDWARE,
+            nullptr,
+            0,
+            &featureLevel,
+            1,
+            D3D11_SDK_VERSION,
+            &m_d3dDevice,
+            nullptr,
+            &m_d3dContext
+        );
+
+        if (FAILED(hr)) {
+            std::cerr << "Failed to create D3D11 device" << std::endl;
+            return false;
+        }
+    }
+
+    // Create OpenXR session with D3D11 binding
+    XrGraphicsBindingD3D11KHR graphicsBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
+    graphicsBinding.device = m_d3dDevice;
+
+    XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
+    sessionCreateInfo.next = &graphicsBinding;
+    sessionCreateInfo.systemId = m_systemId;
+
+    XrResult result = xrCreateSession(m_instance, &sessionCreateInfo, &m_session);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to create OpenXR session: " << result << std::endl;
+        return false;
+    }
+
+    std::cout << "OpenXR session created successfully" << std::endl;
+    return true;
+}
+
+bool VROverlay::createReferenceSpaces() {
+    // Create LOCAL reference space (cockpit/seated space)
+    XrReferenceSpaceCreateInfo spaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+    spaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+    spaceCreateInfo.poseInReferenceSpace.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+    spaceCreateInfo.poseInReferenceSpace.position = {0.0f, 0.0f, 0.0f};
+
+    XrResult result = xrCreateReferenceSpace(m_session, &spaceCreateInfo, &m_localSpace);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to create LOCAL reference space: " << result << std::endl;
+        return false;
+    }
+
+    // Create VIEW reference space (HMD space)
+    spaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+    result = xrCreateReferenceSpace(m_session, &spaceCreateInfo, &m_viewSpace);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to create VIEW reference space: " << result << std::endl;
+        return false;
+    }
+
+    std::cout << "OpenXR reference spaces created successfully" << std::endl;
+    return true;
+}
+
+bool VROverlay::createSwapchain() {
+    // Enumerate swapchain formats
+    uint32_t formatCount = 0;
+    xrEnumerateSwapchainFormats(m_session, 0, &formatCount, nullptr);
+    std::vector<int64_t> formats(formatCount);
+    xrEnumerateSwapchainFormats(m_session, formatCount, &formatCount, formats.data());
+
+    // Choose RGBA8 format
+    int64_t selectedFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    bool foundFormat = false;
+    for (int64_t format : formats) {
+        if (format == DXGI_FORMAT_R8G8B8A8_UNORM) {
+            foundFormat = true;
+            break;
+        }
+    }
+
+    if (!foundFormat) {
+        std::cerr << "RGBA8 format not supported" << std::endl;
+        return false;
+    }
+
+    // Create swapchain
+    XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    swapchainCreateInfo.format = selectedFormat;
+    swapchainCreateInfo.sampleCount = 1;
+    swapchainCreateInfo.width = m_swapchainWidth;
+    swapchainCreateInfo.height = m_swapchainHeight;
+    swapchainCreateInfo.faceCount = 1;
+    swapchainCreateInfo.arraySize = 1;
+    swapchainCreateInfo.mipCount = 1;
+
+    XrResult result = xrCreateSwapchain(m_session, &swapchainCreateInfo, &m_swapchain);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to create swapchain: " << result << std::endl;
+        return false;
+    }
+
+    // Get swapchain images
+    uint32_t imageCount = 0;
+    xrEnumerateSwapchainImages(m_swapchain, 0, &imageCount, nullptr);
+    m_swapchainImages.resize(imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+    xrEnumerateSwapchainImages(m_swapchain, imageCount, &imageCount,
+        reinterpret_cast<XrSwapchainImageBaseHeader*>(m_swapchainImages.data()));
+
+    std::cout << "OpenXR swapchain created with " << imageCount << " images" << std::endl;
+    return true;
+}
+
+bool VROverlay::getD3D11GraphicsRequirements() {
+    XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
+
+    // Get function pointer for xrGetD3D11GraphicsRequirementsKHR
+    PFN_xrGetD3D11GraphicsRequirementsKHR pfnGetD3D11GraphicsRequirements = nullptr;
+    XrResult result = xrGetInstanceProcAddr(
+        m_instance,
+        "xrGetD3D11GraphicsRequirementsKHR",
+        (PFN_xrVoidFunction*)&pfnGetD3D11GraphicsRequirements
+    );
+
+    if (XR_FAILED(result) || !pfnGetD3D11GraphicsRequirements) {
+        std::cerr << "Failed to get xrGetD3D11GraphicsRequirementsKHR function" << std::endl;
+        return false;
+    }
+
+    result = pfnGetD3D11GraphicsRequirements(m_instance, m_systemId, &graphicsRequirements);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to get D3D11 graphics requirements: " << result << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+void VROverlay::resetPosition() {
+    std::cout << "=== KNEEBOARD MODE: Setting overlay position ===" << std::endl;
+
+    Config& config = Config::getInstance();
+
+    // Convert Euler angles to quaternion
+    float pitchRad = config.overlay.kneeboardPitch * 3.14159265f / 180.0f;
+    float yawRad = config.overlay.kneeboardYaw * 3.14159265f / 180.0f;
+    float rollRad = config.overlay.kneeboardRoll * 3.14159265f / 180.0f;
+
+    float cy = cos(yawRad * 0.5f);
+    float sy = sin(yawRad * 0.5f);
+    float cp = cos(pitchRad * 0.5f);
+    float sp = sin(pitchRad * 0.5f);
+    float cr = cos(rollRad * 0.5f);
+    float sr = sin(rollRad * 0.5f);
+
+    // Set position in LOCAL space (cockpit space)
+    m_overlayPose.position.x = config.overlay.kneeboardPosX;
+    m_overlayPose.position.y = config.overlay.kneeboardPosY;
+    m_overlayPose.position.z = config.overlay.kneeboardPosZ;
+
+    // Set orientation (quaternion from Euler angles)
+    m_overlayPose.orientation.w = cy * cp * cr + sy * sp * sr;
+    m_overlayPose.orientation.x = cy * cp * sr - sy * sp * cr;
+    m_overlayPose.orientation.y = sy * cp * sr + cy * sp * cr;
+    m_overlayPose.orientation.z = sy * cp * cr - cy * sp * sr;
+
+    // Update overlay dimensions
+    m_overlayWidth = config.overlay.width;
+    m_overlayHeight = config.overlay.height;
+
+    std::cout << "Kneeboard locked to cockpit (LOCAL space):" << std::endl;
+    std::cout << "  Position: (" << m_overlayPose.position.x << ", "
+              << m_overlayPose.position.y << ", " << m_overlayPose.position.z << ")" << std::endl;
+    std::cout << "  Rotation: Pitch=" << config.overlay.kneeboardPitch
+              << ", Yaw=" << config.overlay.kneeboardYaw
+              << ", Roll=" << config.overlay.kneeboardRoll << std::endl;
+}
+
+bool VROverlay::updateTextureD3D11(ID3D11Texture2D* texture) {
+    if (!m_initialized || !m_swapchain) {
+        return false;
+    }
+
+    // Acquire swapchain image
+    XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    uint32_t imageIndex = 0;
+    XrResult result = xrAcquireSwapchainImage(m_swapchain, &acquireInfo, &imageIndex);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to acquire swapchain image" << std::endl;
+        return false;
+    }
+
+    // Wait for swapchain image
+    XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    waitInfo.timeout = XR_INFINITE_DURATION;
+    result = xrWaitSwapchainImage(m_swapchain, &waitInfo);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to wait for swapchain image" << std::endl;
+        return false;
+    }
+
+    // Copy texture to swapchain image
+    m_d3dContext->CopyResource(m_swapchainImages[imageIndex].texture, texture);
+
+    // Release swapchain image
+    XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    result = xrReleaseSwapchainImage(m_swapchain, &releaseInfo);
+    if (XR_FAILED(result)) {
+        std::cerr << "Failed to release swapchain image" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool VROverlay::setOpacity(float opacity) {
+    m_opacity = opacity;
+    return true;
+}
+
+bool VROverlay::show() {
+    m_visible = true;
+    return true;
+}
+
+bool VROverlay::hide() {
+    m_visible = false;
+    return true;
+}
+
+void VROverlay::shutdown() {
+    if (!m_initialized) {
+        return;
+    }
+
+    shutdownOpenXR();
+    m_initialized = false;
+}
+
+void VROverlay::shutdownOpenXR() {
+    if (m_swapchain != XR_NULL_HANDLE) {
+        xrDestroySwapchain(m_swapchain);
+        m_swapchain = XR_NULL_HANDLE;
+    }
+
+    if (m_localSpace != XR_NULL_HANDLE) {
+        xrDestroySpace(m_localSpace);
+        m_localSpace = XR_NULL_HANDLE;
+    }
+
+    if (m_viewSpace != XR_NULL_HANDLE) {
+        xrDestroySpace(m_viewSpace);
+        m_viewSpace = XR_NULL_HANDLE;
+    }
+
+    if (m_session != XR_NULL_HANDLE) {
+        xrDestroySession(m_session);
+        m_session = XR_NULL_HANDLE;
+    }
+
+    if (m_instance != XR_NULL_HANDLE) {
+        xrDestroyInstance(m_instance);
+        m_instance = XR_NULL_HANDLE;
+    }
+
+    if (m_d3dContext) {
+        m_d3dContext->Release();
+        m_d3dContext = nullptr;
+    }
+
+    if (m_d3dDevice) {
+        m_d3dDevice->Release();
+        m_d3dDevice = nullptr;
+    }
+
+    std::cout << "OpenXR shutdown complete" << std::endl;
+}

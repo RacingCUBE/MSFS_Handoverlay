@@ -1,0 +1,3 @@
+LIBRARY MSFSHandOverlay_Layer
+EXPORTS
+xrNegotiateLoaderApiLayerInterface

@@ -1,0 +1,7 @@
+# Copy file only if destination doesn't exist (preserve user settings across rebuilds)
+if(NOT EXISTS "${dst}")
+    file(COPY_FILE "${src}" "${dst}")
+    message(STATUS "Config copied: ${dst}")
+else()
+    message(STATUS "Config preserved (already exists): ${dst}")
+endif()

@@ -1,0 +1,6 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit]
+"C:\\Program Files\\MSFSHandOverlay\\MSFSHandOverlay_api_layer.json"=dword:00000000
+"C:\\Users\\T4A-4\\RacingCUBE-MotionCompensation\\XR_APILAYER_RACINGCUBE_motion_compensation.json"=dword:00000000
+"C:\\Program Files\\OpenXR-MotionCompensation\\XR_APILAYER_NOVENDOR_motion_compensation.json"=dword:00000001

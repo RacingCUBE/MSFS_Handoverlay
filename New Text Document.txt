@@ -1,0 +1,2 @@
+cd "G:\Shared drives\RacingCUBE\RacingCUBE APS\MSFS 2020 project\Hexapod project\MSFSHandOverlay\MSFSHandOverlay"
+powershell -ExecutionPolicy Bypass -File .\diagnose_pc.ps1 *> diagnose_output.txt
