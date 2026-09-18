@@ -142,6 +142,30 @@ bool Config::load(const std::string& filename) {
                 else if (key == "AutoGainMaxGain") segmentation.autoGainMaxGain = std::stof(value);
                 else if (key == "ClaheClipLimit") segmentation.claheClipLimit = std::stof(value);
             }
+            else if (section == "Touch") {
+                if (key == "Enabled") touch.enabled = (std::stoi(value) != 0);
+                else if (key == "ComPort") touch.comPort = value;
+                else if (key == "BaudRate") touch.baudRate = std::stoi(value);
+                else if (key == "EntryEdge") touch.entryEdge = std::stoi(value);
+                else if (key == "MatchMaxDistNorm") touch.matchMaxDistNorm = std::stof(value);
+                else if (key == "ButtonCount") {
+                    int count = std::stoi(value);
+                    if (count > 0) touch.buttons.resize(static_cast<size_t>(count));
+                }
+            }
+            else if (section.rfind("TouchButton", 0) == 0) {
+                // Section name like "TouchButton3" - the trailing digits index touch.buttons.
+                std::string idxStr = section.substr(std::string("TouchButton").length());
+                if (!idxStr.empty() && idxStr.find_first_not_of("0123456789") == std::string::npos) {
+                    size_t idx = static_cast<size_t>(std::stoul(idxStr));
+                    if (idx >= touch.buttons.size()) touch.buttons.resize(idx + 1);
+                    if (key == "Name") touch.buttons[idx].name = value;
+                    else if (key == "Zone") touch.buttons[idx].zone = std::stoi(value);
+                    else if (key == "IsLeftEye") touch.buttons[idx].isLeftEye = (std::stoi(value) != 0);
+                    else if (key == "XNorm") touch.buttons[idx].xNorm = std::stof(value);
+                    else if (key == "YNorm") touch.buttons[idx].yNorm = std::stof(value);
+                }
+            }
         }
         catch (const std::exception& e) {
             std::cerr << "Error parsing config value: " << key << " = " << value << std::endl;
@@ -163,6 +187,7 @@ void Config::loadDefaults() {
         overlay = OverlayConfig();
         input = InputConfig();
         segmentation = SegmentationConfig();
+        touch = TouchConfig();
     } else {
         std::cout << "Loaded default settings from " << defaultConfigPath << std::endl;
     }
@@ -257,7 +282,24 @@ bool Config::save(const std::string& filename) {
     file << "AutoGainEnabled = " << (segmentation.autoGainEnabled ? 1 : 0) << "  # Lift dark frames toward AutoGainTarget before AI segmentation (0/1)\n";
     file << "AutoGainTarget = " << segmentation.autoGainTarget << "  # Target mean brightness (0-255) the auto-gain lifts dark frames toward\n";
     file << "AutoGainMaxGain = " << segmentation.autoGainMaxGain << "  # Cap on the brightness multiplier\n";
-    file << "ClaheClipLimit = " << segmentation.claheClipLimit << "  # Local contrast enhancement strength on the AI segmentation model's input\n";
+    file << "ClaheClipLimit = " << segmentation.claheClipLimit << "  # Local contrast enhancement strength on the AI segmentation model's input\n\n";
+
+    file << "[Touch]\n";
+    file << "Enabled = " << (touch.enabled ? 1 : 0) << "  # Enable capacitive-touch fingertip matching\n";
+    file << "ComPort = " << touch.comPort << "  # Serial port the touch microcontroller is on (e.g. COM5)\n";
+    file << "BaudRate = " << touch.baudRate << "\n";
+    file << "EntryEdge = " << touch.entryEdge << "  # Which frame edge the arm enters from: 0=Bottom,1=Top,2=Left,3=Right\n";
+    file << "MatchMaxDistNorm = " << touch.matchMaxDistNorm << "  # Max normalized distance to accept a fingertip->button match\n";
+    file << "ButtonCount = " << touch.buttons.size() << "\n\n";
+    for (size_t i = 0; i < touch.buttons.size(); ++i) {
+        const auto& b = touch.buttons[i];
+        file << "[TouchButton" << i << "]\n";
+        file << "Name = " << b.name << "\n";
+        file << "Zone = " << b.zone << "\n";
+        file << "IsLeftEye = " << (b.isLeftEye ? 1 : 0) << "\n";
+        file << "XNorm = " << b.xNorm << "\n";
+        file << "YNorm = " << b.yNorm << "\n\n";
+    }
 
     file.close();
     return true;
@@ -367,6 +409,7 @@ bool Config::loadProfile(const std::string& profileName) {
     chromaKey = ChromaKeyConfig();
     overlay = OverlayConfig();
     input = InputConfig();
+    touch = TouchConfig();
 
     // Load using existing load method
     if (load(profilePath)) {

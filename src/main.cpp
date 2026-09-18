@@ -25,6 +25,8 @@
 #include "PerformanceStats.h"
 #include "D3D11Context.h"
 #include "SegmentationEngine.h"
+#include "TouchInput.h"
+#include "HandTouchTracker.h"
 
 // DirectX 11 interop
 #include <d3d11.h>
@@ -70,6 +72,22 @@ static bool g_useValveBuiltInCamera = false;
 enum class KeyingMode { ChromaKey, AISegmentation };
 static KeyingMode g_keyingMode = KeyingMode::ChromaKey;
 SegmentationEngine g_segmentationEngine;
+
+// Capacitive-touch input: a physical touch on the panel confirms *that* a virtual button
+// was pressed but not *which* one. Combined with the fingertip position extracted from the
+// AI segmentation mask at the moment of contact (HandTouchTracker.h), this resolves which
+// calibrated button was actually touched - see TOUCH_CALIBRATION.md for the full design and
+// the hardware/firmware side (arduino/CapacitiveTouchZones/).
+TouchInput g_touchInput;
+TouchMatchResult g_lastTouchMatch;
+std::chrono::steady_clock::time_point g_lastTouchMatchTime;
+// When armed, the next touch event's detected fingertip position is written into
+// config.touch.buttons[g_touchCalibrationTargetIndex] instead of being matched - this is
+// the "physically touch the real button while armed" calibration workflow (Touch
+// Calibration tab). g_touchCalibrationTargetEye selects which eye's mask/position to use.
+bool g_touchCalibrationArmed = false;
+int g_touchCalibrationTargetIndex = -1;
+bool g_touchCalibrationTargetEye = true;  // true = left eye
 
 // True when FlightSimulator.exe is the actual Windows foreground window right now - used to
 // pick GPU vs CPU for AI Segmentation per-frame (GPU gives the best matte quality but directly
@@ -1556,6 +1574,67 @@ void mainLoop() {
                     }
                 }
 
+                // Capacitive touch: check for a pending event and, if segmentation produced a
+                // usable mask this frame, resolve it to a fingertip position and either feed
+                // calibration capture or match against the calibrated button table. Uses
+                // *this* frame's mask rather than trying to align to the touch event's own
+                // device timestamp - at ~30fps the mask is at most one frame stale relative
+                // to the touch, well within the fingertip-vs-button matching tolerance.
+                if (config.touch.enabled && useSegmentation && (!leftAlpha.empty() || !rightAlpha.empty())) {
+                    TouchEvent touchEvt;
+                    if (g_touchInput.pollEvent(touchEvt)) {
+                        HandEntryEdge entryEdge = static_cast<HandEntryEdge>(config.touch.entryEdge);
+
+                        if (g_touchCalibrationArmed) {
+                            const cv::Mat& mask = g_touchCalibrationTargetEye ? leftAlpha : rightAlpha;
+                            cv::Point2f fingertip = findFingertipNormalized(mask, entryEdge);
+                            if (fingertip.x >= 0.0f && g_touchCalibrationTargetIndex >= 0 &&
+                                g_touchCalibrationTargetIndex < static_cast<int>(config.touch.buttons.size())) {
+                                auto& btn = config.touch.buttons[g_touchCalibrationTargetIndex];
+                                btn.xNorm = fingertip.x;
+                                btn.yNorm = fingertip.y;
+                                btn.isLeftEye = g_touchCalibrationTargetEye;
+                                btn.zone = touchEvt.zone;
+                                std::cout << "[Touch Calibration] Captured '" << btn.name << "' at ("
+                                          << fingertip.x << ", " << fingertip.y << "), zone "
+                                          << touchEvt.zone << std::endl;
+                                g_touchCalibrationArmed = false;
+                                g_touchCalibrationTargetIndex = -1;
+                            } else {
+                                std::cout << "[Touch Calibration] No fingertip found this frame - try again" << std::endl;
+                            }
+                        } else {
+                            // Try left eye first, then right - a calibration entry only exists
+                            // for one eye per button, so whichever eye actually sees the hand
+                            // contour is the one that will match.
+                            cv::Point2f fingertipLeft = findFingertipNormalized(leftAlpha, entryEdge);
+                            TouchMatchResult result = matchButton(fingertipLeft, true, touchEvt.zone,
+                                                                   config.touch.buttons, config.touch.matchMaxDistNorm);
+                            if (!result.matched) {
+                                cv::Point2f fingertipRight = findFingertipNormalized(rightAlpha, entryEdge);
+                                TouchMatchResult resultRight = matchButton(fingertipRight, false, touchEvt.zone,
+                                                                            config.touch.buttons, config.touch.matchMaxDistNorm);
+                                if (resultRight.matched || result.fingertipXNorm < 0.0f) {
+                                    result = resultRight;
+                                }
+                            }
+
+                            g_lastTouchMatch = result;
+                            g_lastTouchMatchTime = std::chrono::steady_clock::now();
+
+                            if (result.matched) {
+                                std::cout << "[Touch] zone " << touchEvt.zone << " -> '" << result.buttonName
+                                          << "' (" << (result.isLeftEye ? "left" : "right") << " eye, x="
+                                          << result.fingertipXNorm << ", y=" << result.fingertipYNorm << ")" << std::endl;
+                            } else {
+                                std::cout << "[Touch] zone " << touchEvt.zone << " -> no button match ("
+                                          << (result.isLeftEye ? "left" : "right") << " eye, x="
+                                          << result.fingertipXNorm << ", y=" << result.fingertipYNorm << ")" << std::endl;
+                            }
+                        }
+                    }
+                }
+
                 // Write RAW camera frames directly to shared memory (before CPU chroma key).
                 // By default the API layer's GPU shader handles chroma keying in HSV space;
                 // when leftAlpha/rightAlpha are non-empty, the precomputed alpha is written
@@ -2333,6 +2412,149 @@ void mainLoop() {
                 ImGui::EndTabItem();
             }
 
+            // ===== TOUCH CALIBRATION TAB =====
+            // Capacitive touch is not built/wired up yet (see TOUCH_CALIBRATION.md and
+            // arduino/CapacitiveTouchZones/) - this tab is fully functional against whatever
+            // is plugged into the configured COM port once it exists. Scope for now is
+            // logging/visualizing the matched button, not driving SimConnect yet.
+            if (ImGui::BeginTabItem("Touch Calibration")) {
+                ImGui::Spacing();
+                ImGui::TextWrapped(
+                    "Matches a capacitive-touch event to a calibrated virtual button using the "
+                    "fingertip position found in the AI segmentation mask at the moment of "
+                    "contact. Requires AI Segmentation mode (Chroma Key tab) to be active.");
+                ImGui::Separator();
+
+                ImGui::Checkbox("Enable touch matching", &config.touch.enabled);
+
+                static char comPortBuf[32] = "";
+                static bool comPortBufInit = false;
+                if (!comPortBufInit) {
+                    strncpy_s(comPortBuf, config.touch.comPort.c_str(), sizeof(comPortBuf) - 1);
+                    comPortBufInit = true;
+                }
+                ImGui::SetNextItemWidth(100);
+                if (ImGui::InputText("COM Port", comPortBuf, sizeof(comPortBuf))) {
+                    config.touch.comPort = comPortBuf;
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120);
+                ImGui::InputInt("Baud Rate", &config.touch.baudRate, 0);
+
+                if (g_touchInput.isConnected()) {
+                    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Connected");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Disconnect")) {
+                        g_touchInput.disconnect();
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Not connected");
+                    if (!g_touchInput.getLastError().empty()) {
+                        ImGui::TextWrapped("Last error: %s", g_touchInput.getLastError().c_str());
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Connect")) {
+                        if (!g_touchInput.connect(config.touch.comPort, config.touch.baudRate)) {
+                            std::cerr << "[Touch] Connect failed: " << g_touchInput.getLastError() << std::endl;
+                        }
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                const char* edgeNames[] = { "Bottom", "Top", "Left", "Right" };
+                ImGui::SetNextItemWidth(150);
+                ImGui::Combo("Arm entry edge", &config.touch.entryEdge, edgeNames, 4);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Which side of the camera frame the arm enters from - "
+                                       "used to tell the fingertip apart from the wrist.");
+                }
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Max match distance", &config.touch.matchMaxDistNorm, 0.01f, 0.5f, "%.3f");
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Last touch event:");
+                bool haveRecent = g_lastTouchMatchTime.time_since_epoch().count() != 0 &&
+                    std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::steady_clock::now() - g_lastTouchMatchTime).count() < 3;
+                if (haveRecent) {
+                    if (g_lastTouchMatch.matched) {
+                        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Matched: %s (%s eye, %.3f, %.3f)",
+                                            g_lastTouchMatch.buttonName.c_str(),
+                                            g_lastTouchMatch.isLeftEye ? "left" : "right",
+                                            g_lastTouchMatch.fingertipXNorm, g_lastTouchMatch.fingertipYNorm);
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "No match (%s eye, %.3f, %.3f)",
+                                            g_lastTouchMatch.isLeftEye ? "left" : "right",
+                                            g_lastTouchMatch.fingertipXNorm, g_lastTouchMatch.fingertipYNorm);
+                    }
+                } else {
+                    ImGui::TextDisabled("(none in the last 3 seconds)");
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Calibrated buttons (%d):", static_cast<int>(config.touch.buttons.size()));
+
+                if (g_touchCalibrationArmed) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+                        "Armed - touch the real button on the panel now...");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel##calib")) {
+                        g_touchCalibrationArmed = false;
+                        g_touchCalibrationTargetIndex = -1;
+                    }
+                }
+
+                int deleteIndex = -1;
+                for (int i = 0; i < static_cast<int>(config.touch.buttons.size()); ++i) {
+                    auto& btn = config.touch.buttons[i];
+                    ImGui::PushID(i);
+                    ImGui::Text("%-20s zone=%-3d %s (%.3f, %.3f)", btn.name.c_str(), btn.zone,
+                                btn.isLeftEye ? "L" : "R", btn.xNorm, btn.yNorm);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(btn.isLeftEye ? "Eye:L" : "Eye:R")) {
+                        btn.isLeftEye = !btn.isLeftEye;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Capture")) {
+                        g_touchCalibrationArmed = true;
+                        g_touchCalibrationTargetIndex = i;
+                        g_touchCalibrationTargetEye = btn.isLeftEye;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Delete")) {
+                        deleteIndex = i;
+                    }
+                    ImGui::PopID();
+                }
+                if (deleteIndex >= 0) {
+                    config.touch.buttons.erase(config.touch.buttons.begin() + deleteIndex);
+                    if (g_touchCalibrationTargetIndex == deleteIndex) {
+                        g_touchCalibrationArmed = false;
+                        g_touchCalibrationTargetIndex = -1;
+                    }
+                }
+
+                ImGui::Spacing();
+                static char newButtonName[64] = "";
+                ImGui::SetNextItemWidth(200);
+                ImGui::InputText("##newButtonName", newButtonName, sizeof(newButtonName));
+                ImGui::SameLine();
+                if (ImGui::Button("Add New Button") && newButtonName[0] != '\0') {
+                    TouchButtonCalibration newBtn;
+                    newBtn.name = newButtonName;
+                    config.touch.buttons.push_back(newBtn);
+                    newButtonName[0] = '\0';
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("Use \"Save to Config File\" below to persist calibration.");
+
+                ImGui::EndTabItem();
+            }
+
             ImGui::EndTabBar();
         }
 
@@ -2467,6 +2689,7 @@ void cleanup() noexcept {
     if (g_readbackPBOs[0] != 0) glDeleteBuffers(2, g_readbackPBOs);
 
     g_cameras.release();
+    g_touchInput.disconnect();
     g_vrOverlay.shutdown();
 
     // Cleanup ImGui
@@ -2629,6 +2852,18 @@ int main(int argc, char* argv[]) {
     if (config.segmentation.keyingModeAI && g_segmentationEngine.isReady()) {
         g_keyingMode = KeyingMode::AISegmentation;
         g_segmentationEngine.resetState();
+    }
+
+    // Connect to the capacitive touch panel's microcontroller, if configured. Non-fatal on
+    // failure (e.g. the hardware isn't built/plugged in yet, or the port moved) - the app
+    // works normally without it, same philosophy as the GPU segmentation session being
+    // best-effort. The Touch Calibration tab's Connect button can retry later.
+    if (config.touch.enabled) {
+        if (g_touchInput.connect(config.touch.comPort, config.touch.baudRate)) {
+            std::cout << "[Init] Touch input connected on " << config.touch.comPort << std::endl;
+        } else {
+            std::cerr << "[Init] Touch input unavailable: " << g_touchInput.getLastError() << std::endl;
+        }
     }
 
     // Load chroma key shader

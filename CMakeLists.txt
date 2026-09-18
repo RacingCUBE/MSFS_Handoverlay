@@ -74,6 +74,8 @@ set(SOURCES
     src/D3D11Context.cpp
     src/HLSLShader.cpp
     src/SegmentationEngine.cpp
+    src/TouchInput.cpp
+    src/HandTouchTracker.cpp
     api-layer/src/SharedMemory.cpp
     ${IMGUI_SOURCES}
 )
@@ -89,6 +91,8 @@ set(HEADERS
     include/D3D11Context.h
     include/HLSLShader.h
     include/SegmentationEngine.h
+    include/TouchInput.h
+    include/HandTouchTracker.h
 )
 
 # Executable (WIN32 = no console window)

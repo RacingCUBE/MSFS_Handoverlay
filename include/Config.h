@@ -84,6 +84,27 @@ struct SegmentationConfig {
     float claheClipLimit = 7.0f;     // Local contrast enhancement strength on the model's input
 };
 
+// One calibrated virtual-button location, in normalized (0-1) camera-frame coordinates for
+// one eye (0,0 = top-left). Filled in by physically touching the real button while
+// calibration "Capture" is armed (Touch Calibration tab) - see HandTouchTracker.h for how
+// it's matched against a detected fingertip at runtime.
+struct TouchButtonCalibration {
+    std::string name;
+    int zone = -1;      // Capacitive touch zone this button belongs to (-1 = any/unknown)
+    bool isLeftEye = true;
+    float xNorm = 0.5f;
+    float yNorm = 0.5f;
+};
+
+struct TouchConfig {
+    bool enabled = false;
+    std::string comPort = "COM5";
+    int baudRate = 115200;
+    int entryEdge = 0;              // HandEntryEdge (HandTouchTracker.h): 0=Bottom,1=Top,2=Left,3=Right
+    float matchMaxDistNorm = 0.15f; // Max normalized distance to accept a fingertip->button match
+    std::vector<TouchButtonCalibration> buttons;
+};
+
 struct OverlayConfig {
     float width = 0.879f;          // Overlay width in meters
     float height = 0.652f;         // Overlay height in meters
@@ -127,6 +148,7 @@ public:
     OverlayConfig overlay;
     InputConfig input;
     SegmentationConfig segmentation;
+    TouchConfig touch;
 
 private:
     std::string currentProfileName = "settings";  // Default to settings.ini
