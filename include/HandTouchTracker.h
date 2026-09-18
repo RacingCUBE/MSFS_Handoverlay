@@ -54,6 +54,18 @@ float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold =
 // instrumented data rather than assumed (see project notes on that fix).
 float angleDeltaAxis(float fromAngle, float toAngle);
 
+// Direction angle (radians, standard atan2 range (-pi, pi]) from the hand contour's
+// centroid toward its fingertip - a genuine 360-degree direction, unlike
+// computeHandOrientationAngle()'s 180-degree-periodic axis. Meant as a live, intuitive
+// "which way is the hand pointing" readout (naturally reads across a full +-180 degree
+// range as a hand turns, with no wraparound ambiguity to explain). NOT used for the actual
+// dial-rotation tracking in main.cpp, which uses the axis angle instead - a
+// centroid-to-fingertip vector can jump around more if segmentation flickers between which
+// contour point gets picked as "the fingertip", especially with multiple fingers visible.
+// NAN if no contour large enough to be a hand was found.
+float computeHandDirectionAngle(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
+                                 int alphaThreshold = 32, double minContourArea = 200.0);
+
 // Result of matching a detected fingertip position against the calibrated button table.
 struct TouchMatchResult {
     bool matched = false;

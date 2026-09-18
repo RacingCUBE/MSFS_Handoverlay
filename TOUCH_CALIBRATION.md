@@ -94,6 +94,25 @@ For a Dial match, the log continues while the touch is held: `Dial 'X' twisted N
 (total M deg)` for each frame's rotation past a small noise threshold, then a `released -
 total rotation` summary line once the touch lifts.
 
+## Live hand diagnostics
+
+The Touch Calibration tab shows a continuously-updated readout (every frame, independent
+of any touch event) for each eye once AI Segmentation mode is active:
+
+- **pos**: fingertip position, normalized 0-1, (0,0) = top-left.
+- **axis**: `computeHandOrientationAngle()`'s ellipse-fit angle, 0-180 degrees. This is
+  what actually drives dial-rotation tracking - it's undirected (a hand at 10 degrees
+  looks identical to one at 190), so it folds back on itself every half-turn on this
+  readout, which is expected.
+- **twist**: `computeHandDirectionAngle()`'s centroid-to-fingertip angle, a genuine +-180
+  degree reading with no ambiguity - sweeps smoothly through the full range as you turn
+  your wrist, so it's the more intuitive one to watch while tuning by eye. Not what dial
+  tracking uses internally (see the function's own comment for why), but a much easier
+  number to eyeball live.
+
+Both go to "no hand detected"/"n/a" when segmentation doesn't see a large enough contour
+(no hand in frame, or in the gap between frames RVM's recurrent state hasn't caught up).
+
 ## Testing without the touch hardware
 
 The hardest part to get right - whether the camera/segmentation pipeline correctly reads

@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <cstring>
 #include <cmath>
+#include <limits>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <opencv2/opencv.hpp>
@@ -103,6 +104,20 @@ struct ActiveDialDrag {
     float totalRotationRad = 0.0f;  // accumulated since this drag started - logging only
 };
 ActiveDialDrag g_activeDialDrag;
+
+// Live, continuously-updated (every frame, independent of any touch event) hand readouts
+// for the Touch Calibration tab's diagnostics section - lets fingertip position and hand
+// orientation/direction be watched in real time while tuning, without needing a touch
+// event to trigger them.
+struct LiveHandDiagnostics {
+    cv::Point2f fingertipLeft{-1.0f, -1.0f};
+    cv::Point2f fingertipRight{-1.0f, -1.0f};
+    float orientationLeftDeg = std::numeric_limits<float>::quiet_NaN();   // axis angle, 0-180
+    float orientationRightDeg = std::numeric_limits<float>::quiet_NaN();
+    float directionLeftDeg = std::numeric_limits<float>::quiet_NaN();     // +-180, see computeHandDirectionAngle
+    float directionRightDeg = std::numeric_limits<float>::quiet_NaN();
+};
+LiveHandDiagnostics g_liveHandDiag;
 
 // True when FlightSimulator.exe is the actual Windows foreground window right now - used to
 // pick GPU vs CPU for AI Segmentation per-frame (GPU gives the best matte quality but directly
@@ -1596,6 +1611,30 @@ void mainLoop() {
                     }
                 }
 
+                // Live hand diagnostics for the Touch Calibration tab: computed every frame
+                // segmentation produces a usable mask, independent of any touch event, so
+                // fingertip position and hand orientation/direction can be watched moving in
+                // real time while tuning entry edge / verifying the pipeline sees a hand at all.
+                if (useSegmentation) {
+                    HandEntryEdge diagEdge = static_cast<HandEntryEdge>(config.touch.entryEdge);
+                    g_liveHandDiag.fingertipLeft = findFingertipNormalized(leftAlpha, diagEdge);
+                    g_liveHandDiag.fingertipRight = findFingertipNormalized(rightAlpha, diagEdge);
+
+                    float orientLeft = computeHandOrientationAngle(leftAlpha);
+                    float orientRight = computeHandOrientationAngle(rightAlpha);
+                    g_liveHandDiag.orientationLeftDeg = std::isnan(orientLeft) ? orientLeft
+                        : orientLeft * 180.0f / static_cast<float>(CV_PI);
+                    g_liveHandDiag.orientationRightDeg = std::isnan(orientRight) ? orientRight
+                        : orientRight * 180.0f / static_cast<float>(CV_PI);
+
+                    float dirLeft = computeHandDirectionAngle(leftAlpha, diagEdge);
+                    float dirRight = computeHandDirectionAngle(rightAlpha, diagEdge);
+                    g_liveHandDiag.directionLeftDeg = std::isnan(dirLeft) ? dirLeft
+                        : dirLeft * 180.0f / static_cast<float>(CV_PI);
+                    g_liveHandDiag.directionRightDeg = std::isnan(dirRight) ? dirRight
+                        : dirRight * 180.0f / static_cast<float>(CV_PI);
+                }
+
                 // Capacitive touch: check for a pending event and, if segmentation produced a
                 // usable mask this frame, resolve it to a fingertip position and either feed
                 // calibration capture or match against the calibrated button table. Uses
@@ -2557,6 +2596,48 @@ void mainLoop() {
                 }
                 ImGui::SetNextItemWidth(150);
                 ImGui::SliderFloat("Max match distance", &config.touch.matchMaxDistNorm, 0.01f, 0.5f, "%.3f");
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Live hand diagnostics (updates every frame, AI Segmentation only):");
+                if (g_keyingMode != KeyingMode::AISegmentation) {
+                    ImGui::TextDisabled("Switch to AI Segmentation mode (Chroma Key tab) to see these.");
+                } else {
+                    for (int eyeIdx = 0; eyeIdx < 2; ++eyeIdx) {
+                        bool isLeft = (eyeIdx == 0);
+                        const cv::Point2f& fingertip = isLeft ? g_liveHandDiag.fingertipLeft : g_liveHandDiag.fingertipRight;
+                        float orientation = isLeft ? g_liveHandDiag.orientationLeftDeg : g_liveHandDiag.orientationRightDeg;
+                        float direction = isLeft ? g_liveHandDiag.directionLeftDeg : g_liveHandDiag.directionRightDeg;
+
+                        ImGui::Text("%s eye:", isLeft ? "Left" : "Right");
+                        ImGui::SameLine();
+                        if (fingertip.x >= 0.0f) {
+                            ImGui::Text("pos (%.3f, %.3f)", fingertip.x, fingertip.y);
+                        } else {
+                            ImGui::TextDisabled("pos: no hand detected");
+                        }
+                        ImGui::SameLine();
+                        if (!std::isnan(orientation)) {
+                            ImGui::Text("| axis %.1f deg (0-180)", orientation);
+                        } else {
+                            ImGui::TextDisabled("| axis: n/a");
+                        }
+                        ImGui::SameLine();
+                        if (!std::isnan(direction)) {
+                            ImGui::Text("| twist %.1f deg (+-180)", direction);
+                        } else {
+                            ImGui::TextDisabled("| twist: n/a");
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "pos: fingertip, normalized 0-1 (0,0 = top-left).\n"
+                            "axis: hand silhouette's orientation - undirected, so 10 and 190 "
+                            "degrees look identical (this is what drives dial tracking).\n"
+                            "twist: centroid->fingertip direction - a true +-180 reading with "
+                            "no ambiguity, easier to watch sweep as you turn your wrist.");
+                    }
+                }
 
                 ImGui::Spacing();
                 ImGui::Separator();

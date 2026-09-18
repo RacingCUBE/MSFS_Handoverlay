@@ -39,15 +39,9 @@ std::vector<cv::Point> findHandContour(const cv::Mat& alphaMask, int alphaThresh
     return contours[bestIdx];
 }
 
-}  // namespace
-
-cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
-                                     int alphaThreshold, double minContourArea) {
-    if (alphaMask.empty()) return cv::Point2f(-1.0f, -1.0f);
-
-    std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
-    if (contour.empty()) return cv::Point2f(-1.0f, -1.0f);
-
+// Shared by findFingertipNormalized() and computeHandDirectionAngle(): the contour point
+// farthest from the edge the arm enters from (see HandEntryEdge).
+cv::Point findExtremePoint(const std::vector<cv::Point>& contour, HandEntryEdge entryEdge) {
     cv::Point best = contour[0];
     for (const auto& pt : contour) {
         switch (entryEdge) {
@@ -57,10 +51,38 @@ cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entr
             case HandEntryEdge::Right:  if (pt.x < best.x) best = pt; break;  // leftmost point
         }
     }
+    return best;
+}
 
+}  // namespace
+
+cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
+                                     int alphaThreshold, double minContourArea) {
+    if (alphaMask.empty()) return cv::Point2f(-1.0f, -1.0f);
+
+    std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
+    if (contour.empty()) return cv::Point2f(-1.0f, -1.0f);
+
+    cv::Point best = findExtremePoint(contour, entryEdge);
     return cv::Point2f(
         static_cast<float>(best.x) / static_cast<float>(alphaMask.cols),
         static_cast<float>(best.y) / static_cast<float>(alphaMask.rows));
+}
+
+float computeHandDirectionAngle(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
+                                 int alphaThreshold, double minContourArea) {
+    if (alphaMask.empty()) return std::numeric_limits<float>::quiet_NaN();
+
+    std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
+    if (contour.empty()) return std::numeric_limits<float>::quiet_NaN();
+
+    cv::Moments m = cv::moments(contour);
+    if (m.m00 <= 0.0) return std::numeric_limits<float>::quiet_NaN();
+    cv::Point2f centroid(static_cast<float>(m.m10 / m.m00), static_cast<float>(m.m01 / m.m00));
+
+    cv::Point fingertip = findExtremePoint(contour, entryEdge);
+    return std::atan2(static_cast<float>(fingertip.y) - centroid.y,
+                       static_cast<float>(fingertip.x) - centroid.x);
 }
 
 float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold,
