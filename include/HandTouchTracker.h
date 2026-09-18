@@ -66,6 +66,30 @@ float angleDeltaAxis(float fromAngle, float toAngle);
 float computeHandDirectionAngle(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
                                  int alphaThreshold = 32, double minContourArea = 200.0);
 
+// Wrap-aware exponential smoothing filter for a 180-degree-periodic axis angle (see
+// computeHandOrientationAngle). Filters via the same "double the angle" vector trick used
+// by angleDeltaAxis(), averaging on the unit circle in doubled-angle space rather than the
+// raw angle directly - a plain average breaks near the axis's own wrap boundary (e.g.
+// naively averaging 179 and 1 degrees should read ~0/180, not ~90).
+class AxisAngleFilter {
+public:
+    // Discards accumulated state - call whenever tracking (re)starts (e.g. a new dial drag
+    // begins, or the hand just re-entered frame after being absent) so a stale angle from
+    // an unrelated moment doesn't bias the first few filtered samples.
+    void reset() { m_initialized = false; }
+
+    // Feeds one new raw angle sample (radians) and returns the filtered angle (radians).
+    // alpha in (0, 1]: weight given to the newest sample - 1.0 is no smoothing at all,
+    // smaller values smooth more but add more lag. Passed per-call (not fixed at
+    // construction) so it can be a live-tunable UI setting.
+    float update(float rawAngle, float alpha);
+
+private:
+    bool m_initialized = false;
+    float m_x = 1.0f;
+    float m_y = 0.0f;
+};
+
 // Result of matching a detected fingertip position against the calibrated button table.
 struct TouchMatchResult {
     bool matched = false;

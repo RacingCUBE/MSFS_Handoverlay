@@ -102,8 +102,15 @@ struct ActiveDialDrag {
     bool isLeftEye = true;
     float lastOrientationRad = 0.0f;
     float totalRotationRad = 0.0f;  // accumulated since this drag started - logging only
+    AxisAngleFilter filter;         // smooths the raw per-frame orientation angle
 };
 ActiveDialDrag g_activeDialDrag;
+
+// Separate filter instances for the live diagnostics readout (Touch Calibration tab) -
+// independent of any drag in progress, so the "axis" number can be watched smoothed even
+// outside an active touch.
+AxisAngleFilter g_axisFilterLeftDiag;
+AxisAngleFilter g_axisFilterRightDiag;
 
 // Live, continuously-updated (every frame, independent of any touch event) hand readouts
 // for the Touch Calibration tab's diagnostics section - lets fingertip position and hand
@@ -1622,10 +1629,20 @@ void mainLoop() {
 
                     float orientLeft = computeHandOrientationAngle(leftAlpha);
                     float orientRight = computeHandOrientationAngle(rightAlpha);
-                    g_liveHandDiag.orientationLeftDeg = std::isnan(orientLeft) ? orientLeft
-                        : orientLeft * 180.0f / static_cast<float>(CV_PI);
-                    g_liveHandDiag.orientationRightDeg = std::isnan(orientRight) ? orientRight
-                        : orientRight * 180.0f / static_cast<float>(CV_PI);
+                    if (std::isnan(orientLeft)) {
+                        g_axisFilterLeftDiag.reset();  // no hand this frame - don't bias next detection
+                        g_liveHandDiag.orientationLeftDeg = orientLeft;
+                    } else {
+                        float filtered = g_axisFilterLeftDiag.update(orientLeft, config.touch.axisFilterAlpha);
+                        g_liveHandDiag.orientationLeftDeg = filtered * 180.0f / static_cast<float>(CV_PI);
+                    }
+                    if (std::isnan(orientRight)) {
+                        g_axisFilterRightDiag.reset();
+                        g_liveHandDiag.orientationRightDeg = orientRight;
+                    } else {
+                        float filtered = g_axisFilterRightDiag.update(orientRight, config.touch.axisFilterAlpha);
+                        g_liveHandDiag.orientationRightDeg = filtered * 180.0f / static_cast<float>(CV_PI);
+                    }
 
                     float dirLeft = computeHandDirectionAngle(leftAlpha, diagEdge);
                     float dirRight = computeHandDirectionAngle(rightAlpha, diagEdge);
@@ -1699,11 +1716,13 @@ void mainLoop() {
                                     const cv::Mat& dragMask = result.isLeftEye ? leftAlpha : rightAlpha;
                                     float startAngle = computeHandOrientationAngle(dragMask);
                                     if (!std::isnan(startAngle)) {
+                                        g_activeDialDrag = ActiveDialDrag();  // fresh filter state too
                                         g_activeDialDrag.active = true;
                                         g_activeDialDrag.buttonIndex = result.buttonIndex;
                                         g_activeDialDrag.zone = touchEvt.zone;
                                         g_activeDialDrag.isLeftEye = result.isLeftEye;
-                                        g_activeDialDrag.lastOrientationRad = startAngle;
+                                        g_activeDialDrag.lastOrientationRad =
+                                            g_activeDialDrag.filter.update(startAngle, config.touch.axisFilterAlpha);
                                         g_activeDialDrag.totalRotationRad = 0.0f;
                                         std::cout << "[Touch] Dial '" << matchedBtn.name
                                                   << "' - tracking rotation while held" << std::endl;
@@ -1730,8 +1749,9 @@ void mainLoop() {
                             g_activeDialDrag = ActiveDialDrag();
                         } else {
                             const cv::Mat& dragMask = g_activeDialDrag.isLeftEye ? leftAlpha : rightAlpha;
-                            float angle = computeHandOrientationAngle(dragMask);
-                            if (!std::isnan(angle)) {
+                            float rawAngle = computeHandOrientationAngle(dragMask);
+                            if (!std::isnan(rawAngle)) {
+                                float angle = g_activeDialDrag.filter.update(rawAngle, config.touch.axisFilterAlpha);
                                 float delta = angleDeltaAxis(g_activeDialDrag.lastOrientationRad, angle);
                                 g_activeDialDrag.lastOrientationRad = angle;
                                 g_activeDialDrag.totalRotationRad += delta;
@@ -2596,6 +2616,13 @@ void mainLoop() {
                 }
                 ImGui::SetNextItemWidth(150);
                 ImGui::SliderFloat("Max match distance", &config.touch.matchMaxDistNorm, 0.01f, 0.5f, "%.3f");
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Dial angle smoothing", &config.touch.axisFilterAlpha, 0.05f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("1.0 = no smoothing. Lower = smoother but more lag - "
+                                       "affects both the 'axis' readout below and real dial "
+                                       "rotation tracking. Tune empirically against real footage.");
+                }
 
                 ImGui::Spacing();
                 ImGui::Separator();

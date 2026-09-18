@@ -110,6 +110,20 @@ float angleDeltaAxis(float fromAngle, float toAngle) {
     return delta * 0.5f;
 }
 
+float AxisAngleFilter::update(float rawAngle, float alpha) {
+    float x = std::cos(2.0f * rawAngle);
+    float y = std::sin(2.0f * rawAngle);
+    if (!m_initialized) {
+        m_x = x;
+        m_y = y;
+        m_initialized = true;
+    } else {
+        m_x = alpha * x + (1.0f - alpha) * m_x;
+        m_y = alpha * y + (1.0f - alpha) * m_y;
+    }
+    return std::atan2(m_y, m_x) * 0.5f;
+}
+
 TouchMatchResult matchButton(const cv::Point2f& fingertipNorm, bool isLeftEye, int zone,
                               const std::vector<TouchButtonCalibration>& buttons,
                               float maxDistNorm) {

@@ -113,6 +113,21 @@ of any touch event) for each eye once AI Segmentation mode is active:
 Both go to "no hand detected"/"n/a" when segmentation doesn't see a large enough contour
 (no hand in frame, or in the gap between frames RVM's recurrent state hasn't caught up).
 
+**Axis is noisy frame-to-frame** - a **Dial angle smoothing** slider (`AxisAngleFilter`,
+wrap-aware exponential smoothing) is available right above the readouts, and feeds both
+this diagnostic and real dial-rotation tracking. 1.0 = no smoothing; lower values smooth
+more at the cost of added lag. Tune by watching the live "axis" number while turning.
+
+**Known real limitation, not fixed by smoothing**: initial testing found the axis angle's
+*sensitivity* can be poor, not just noisy - a 90-degree real wrist rotation moved the
+reading only ~10 degrees in one test. This is consistent with an ellipse fit's angle
+becoming poorly-conditioned on a compact/near-circular hand silhouette (e.g. a pinch-grip
+on a small knob rather than a flat, elongated hand shape) - the fit genuinely doesn't have
+a strong, well-defined axis to report in that pose. Smoothing reduces noise on whatever
+signal exists; it cannot recover a signal that isn't there. If this keeps showing up
+across different real grips, dial rotation may need a different underlying signal than
+ellipse-fit orientation - worth revisiting once more real-hardware testing is done.
+
 ## Testing without the touch hardware
 
 The hardest part to get right - whether the camera/segmentation pipeline correctly reads

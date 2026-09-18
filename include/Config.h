@@ -118,6 +118,11 @@ struct TouchConfig {
     int joystickID = -1;
     int entryEdge = 0;              // HandEntryEdge (HandTouchTracker.h): 0=Bottom,1=Top,2=Left,3=Right
     float matchMaxDistNorm = 0.15f; // Max normalized distance to accept a fingertip->button match
+    // Smoothing for the hand-orientation axis angle used by dial rotation tracking
+    // (AxisAngleFilter, HandTouchTracker.h) - 1.0 = no smoothing, smaller = smoother but
+    // more lag. Live-tunable since the right value is found empirically against real
+    // footage, not derived analytically.
+    float axisFilterAlpha = 0.3f;
     std::vector<TouchButtonCalibration> buttons;
 };
 
