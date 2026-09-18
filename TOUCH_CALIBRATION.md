@@ -118,6 +118,24 @@ wrap-aware exponential smoothing) is available right above the readouts, and fee
 this diagnostic and real dial-rotation tracking. 1.0 = no smoothing; lower values smooth
 more at the cost of added lag. Tune by watching the live "axis" number while turning.
 
+## Dial rotation as tick counts, not degrees
+
+Rather than reporting a precise rotation amount, dial tracking now counts simple +1/-1
+detents: each frame the filtered axis angle moves past the noise threshold in one
+direction, the active dial's tick count changes by one. This is deliberately more
+forgiving of the axis signal's real-world noise and limited sensitivity (see below) than
+trying to report an accurate degree amount would be - it only needs to know *which way*
+things moved, not *how much*. It's also a closer match to how SimConnect knob controls
+typically work anyway (discrete increment/decrement events, not a continuous angle).
+
+The Touch Calibration tab shows an **Active dial** section with the live tick count in
+large text plus a bidirectional bar (green = positive, red = negative, centered at zero,
+full deflection at +-20 ticks) - meant to be readable at a glance rather than needing to
+read small numbers, which is awkward to do with an HMD on. This currently only exists in
+the companion app's flat window; whether it also needs to be visible inside the headset
+itself (a separate change to the injected VR overlay layer, not just this app's own UI) is
+still open.
+
 **Known real limitation, not fixed by smoothing**: initial testing found the axis angle's
 *sensitivity* can be poor, not just noisy - a 90-degree real wrist rotation moved the
 reading only ~10 degrees in one test. This is consistent with an ellipse fit's angle

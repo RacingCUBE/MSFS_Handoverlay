@@ -101,7 +101,14 @@ struct ActiveDialDrag {
     int zone = -1;
     bool isLeftEye = true;
     float lastOrientationRad = 0.0f;
-    float totalRotationRad = 0.0f;  // accumulated since this drag started - logging only
+    float totalRotationRad = 0.0f;  // accumulated since this drag started - diagnostic only
+    // Simple detent-style counter: +1/-1 per frame the filtered angle moves past the noise
+    // threshold in that direction, rather than trying to report a precise degree amount -
+    // far more forgiving of a noisy or low-sensitivity signal (see TOUCH_CALIBRATION.md's
+    // notes on the axis angle's real-world sensitivity limits) since it only needs the
+    // *sign* of the change to be reliable, not its magnitude. This is also naturally close
+    // to how SimConnect knob controls actually work (discrete increment/decrement events).
+    int tickCount = 0;
     AxisAngleFilter filter;         // smooths the raw per-frame orientation angle
 };
 ActiveDialDrag g_activeDialDrag;
@@ -1743,9 +1750,10 @@ void mainLoop() {
                     if (g_activeDialDrag.active) {
                         if (!g_touchInput.isHeld(g_activeDialDrag.zone)) {
                             const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
-                            std::cout << "[Touch] Dial '" << dialBtn.name << "' released - total rotation "
+                            std::cout << "[Touch] Dial '" << dialBtn.name << "' released - final tick count "
+                                      << g_activeDialDrag.tickCount << " (total "
                                       << (g_activeDialDrag.totalRotationRad * 180.0f / static_cast<float>(CV_PI))
-                                      << " deg" << std::endl;
+                                      << " deg)" << std::endl;
                             g_activeDialDrag = ActiveDialDrag();
                         } else {
                             const cv::Mat& dragMask = g_activeDialDrag.isLeftEye ? leftAlpha : rightAlpha;
@@ -1757,14 +1765,22 @@ void mainLoop() {
                                 g_activeDialDrag.totalRotationRad += delta;
 
                                 // Small dead-zone so mask noise between frames (when the hand
-                                // is essentially still) doesn't spam the log.
+                                // is essentially still) doesn't spam ticks. A plain sign check
+                                // against this threshold - not the magnitude of delta - is
+                                // deliberately all this counts on: "did it move, and which way"
+                                // is a much more reliable question to ask of this signal than
+                                // "by how much", given the sensitivity limits found in testing.
                                 constexpr float kNoiseThresholdRad = 0.02f;  // ~1.1 degrees
-                                if (std::fabs(delta) > kNoiseThresholdRad) {
+                                if (delta > kNoiseThresholdRad) {
+                                    g_activeDialDrag.tickCount += 1;
                                     const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
-                                    std::cout << "[Touch] Dial '" << dialBtn.name << "' twisted "
-                                              << (delta * 180.0f / static_cast<float>(CV_PI)) << " deg (total "
-                                              << (g_activeDialDrag.totalRotationRad * 180.0f / static_cast<float>(CV_PI))
-                                              << " deg)" << std::endl;
+                                    std::cout << "[Touch] Dial '" << dialBtn.name << "' tick +1 (count "
+                                              << g_activeDialDrag.tickCount << ")" << std::endl;
+                                } else if (delta < -kNoiseThresholdRad) {
+                                    g_activeDialDrag.tickCount -= 1;
+                                    const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                                    std::cout << "[Touch] Dial '" << dialBtn.name << "' tick -1 (count "
+                                              << g_activeDialDrag.tickCount << ")" << std::endl;
                                 }
                             }
                         }
@@ -2685,6 +2701,52 @@ void mainLoop() {
                     }
                 } else {
                     ImGui::TextDisabled("(none in the last 3 seconds)");
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Active dial:");
+                if (g_activeDialDrag.active) {
+                    const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                    ImGui::SameLine();
+                    ImGui::Text("%s", dialBtn.name.c_str());
+
+                    ImGui::SetWindowFontScale(1.8f);
+                    ImGui::Text("%+d", g_activeDialDrag.tickCount);
+                    ImGui::SetWindowFontScale(1.0f);
+
+                    // A bidirectional bar centered on zero (ImGui::ProgressBar is 0-1 only
+                    // and doesn't fit a value that can go negative) - fills right for
+                    // positive ticks, left for negative, so the count can be read as a
+                    // glance rather than needing to focus on small text. Meant for this to
+                    // be easy to check on a monitor without a headset on while tuning;
+                    // whether it also needs to be visible inside the headset itself (a
+                    // separate, bigger change to the injected VR overlay layer) is still
+                    // open - see TOUCH_CALIBRATION.md.
+                    constexpr int kBarRangeTicks = 20;  // ticks shown as full deflection each way
+                    float frac = std::clamp(static_cast<float>(g_activeDialDrag.tickCount)
+                                             / static_cast<float>(kBarRangeTicks), -1.0f, 1.0f);
+
+                    ImVec2 barSize(300.0f, 24.0f);
+                    ImVec2 barPos = ImGui::GetCursorScreenPos();
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    drawList->AddRectFilled(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y),
+                                             ImGui::GetColorU32(ImGuiCol_FrameBg));
+                    float centerX = barPos.x + barSize.x * 0.5f;
+                    float fillX = centerX + frac * (barSize.x * 0.5f);
+                    ImU32 fillColor = (frac >= 0.0f) ? IM_COL32(80, 200, 80, 255) : IM_COL32(220, 80, 80, 255);
+                    float fillLeft = (centerX < fillX) ? centerX : fillX;
+                    float fillRight = (centerX < fillX) ? fillX : centerX;
+                    drawList->AddRectFilled(ImVec2(fillLeft, barPos.y),
+                                             ImVec2(fillRight, barPos.y + barSize.y), fillColor);
+                    drawList->AddLine(ImVec2(centerX, barPos.y), ImVec2(centerX, barPos.y + barSize.y),
+                                       IM_COL32(255, 255, 255, 180), 2.0f);
+                    drawList->AddRect(barPos, ImVec2(barPos.x + barSize.x, barPos.y + barSize.y),
+                                       IM_COL32(200, 200, 200, 255));
+                    ImGui::Dummy(barSize);  // reserve layout space for the manually-drawn bar
+                } else {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(none)");
                 }
 
                 ImGui::Spacing();
