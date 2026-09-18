@@ -60,6 +60,15 @@ public:
 
     const std::string& getLastError() const { return m_lastError; }
 
+    // Test-only: injects a synthetic touch event and marks the zone "held", without any
+    // real HID gamepad - for exercising the matching/dial-tracking pipeline (against real
+    // camera footage) before touch hardware exists. Only meant to be used while NOT
+    // connected to a real device (isConnected() == false) - update() overwrites the whole
+    // button-state array from the real device otherwise, which would clobber a simulated
+    // zone. Call injectSimulatedRelease() with the same zone to end the simulated hold.
+    void injectSimulatedPress(int zone);
+    void injectSimulatedRelease(int zone);
+
 private:
     int m_joystickID = -1;
     std::vector<unsigned char> m_lastButtonState;

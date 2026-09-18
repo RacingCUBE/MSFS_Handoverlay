@@ -73,6 +73,24 @@ bool TouchInput::isHeld(int zone) const {
     return m_lastButtonState[zone] == GLFW_PRESS;
 }
 
+void TouchInput::injectSimulatedPress(int zone) {
+    if (zone < 0) return;
+    if (static_cast<int>(m_lastButtonState.size()) <= zone) {
+        m_lastButtonState.resize(zone + 1, GLFW_RELEASE);
+    }
+    m_lastButtonState[zone] = GLFW_PRESS;
+
+    TouchEvent evt;
+    evt.zone = zone;
+    evt.receivedAt = std::chrono::steady_clock::now();
+    m_pendingEvents.push_back(evt);
+}
+
+void TouchInput::injectSimulatedRelease(int zone) {
+    if (zone < 0 || zone >= static_cast<int>(m_lastButtonState.size())) return;
+    m_lastButtonState[zone] = GLFW_RELEASE;
+}
+
 bool TouchInput::pollEvent(TouchEvent& outEvent) {
     if (m_pendingEvents.empty()) return false;
     outEvent = m_pendingEvents.back();  // most recent only - see header comment

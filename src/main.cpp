@@ -2648,6 +2648,40 @@ void mainLoop() {
                 ImGui::Spacing();
                 ImGui::TextDisabled("Use \"Save to Config File\" below to persist calibration.");
 
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Testing without hardware:");
+                ImGui::TextWrapped(
+                    "Simulates a touch on a zone so the whole pipeline - calibration capture, "
+                    "matching, and (if held) dial rotation - can be exercised against your "
+                    "real hand and real camera footage, without any touch device plugged in.");
+
+                static int simulateZone = 0;
+                ImGui::SetNextItemWidth(100);
+                ImGui::InputInt("Zone##simulate", &simulateZone);
+                if (simulateZone < 0) simulateZone = 0;
+
+                static bool simulateHeld = false;
+                if (!simulateHeld) {
+                    if (ImGui::Button("Simulate Touch (press)")) {
+                        g_touchInput.injectSimulatedPress(simulateZone);
+                        simulateHeld = true;
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+                        "Zone %d simulated-held - move/twist your hand in view of the camera now",
+                        simulateZone);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Release##simulate")) {
+                        g_touchInput.injectSimulatedRelease(simulateZone);
+                        simulateHeld = false;
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Only meaningful while not connected to a real device - "
+                                       "a real gamepad's own state would immediately override it.");
+                }
+
                 ImGui::EndTabItem();
             }
 

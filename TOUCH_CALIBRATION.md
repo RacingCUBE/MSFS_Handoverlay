@@ -94,6 +94,27 @@ For a Dial match, the log continues while the touch is held: `Dial 'X' twisted N
 (total M deg)` for each frame's rotation past a small noise threshold, then a `released -
 total rotation` summary line once the touch lifts.
 
+## Testing without the touch hardware
+
+The hardest part to get right - whether the camera/segmentation pipeline correctly reads
+your real hand's position and twist - doesn't actually need the touch sensor at all. The
+Touch Calibration tab has a **Testing without hardware** section at the bottom:
+
+1. Enable touch matching, switch to AI Segmentation mode, set a Zone number (any value).
+2. Click **Simulate Touch (press)** - this injects a fake touch event through the exact
+   same code path a real HID gamepad press would use (calibration capture, matching, and
+   dial-drag start all trigger identically).
+3. Put your hand wherever you want to test, or - for a Dial - keep it in view and twist
+   your wrist. Watch the log / the tab's "Last touch event" readout.
+4. Click **Release** to end the simulated hold (only matters for Dial testing, where the
+   drag continues for as long as the zone reads as held).
+
+This validates everything except the actual touch sensing itself: fingertip extraction,
+button matching, and dial rotation direction/magnitude can all be checked against real
+footage today. A spare USB gamepad, if you have one, is an alternative that also exercises
+the real `TouchInput::update()` polling path (press its buttons instead of clicking
+Simulate) - but the simulate button needs nothing extra at all.
+
 ## Known limitations / next steps
 
 - No SimConnect wiring yet - matches are informational only.
