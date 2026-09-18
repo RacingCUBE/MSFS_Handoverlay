@@ -2685,9 +2685,11 @@ void mainLoop() {
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Text("Last touch event:");
+                // 10 seconds, not 3 - 3 proved too short to read while also checking the
+                // hand diagnostics above it, per real testing feedback.
                 bool haveRecent = g_lastTouchMatchTime.time_since_epoch().count() != 0 &&
                     std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::steady_clock::now() - g_lastTouchMatchTime).count() < 3;
+                        std::chrono::steady_clock::now() - g_lastTouchMatchTime).count() < 10;
                 if (haveRecent) {
                     if (g_lastTouchMatch.matched) {
                         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Matched: %s (%s eye, %.3f, %.3f)",
@@ -2831,11 +2833,33 @@ void mainLoop() {
                 ImGui::InputInt("Zone##simulate", &simulateZone);
                 if (simulateZone < 0) simulateZone = 0;
 
+                // A short countdown between clicking the button and the touch actually
+                // firing - without this, the press happens the instant the button is
+                // clicked, using whatever hand position the camera sees *at that exact
+                // moment*, which is almost never where you want it: clicking requires your
+                // hand on the mouse, not in front of the camera. Real hardware doesn't have
+                // this problem (the touching hand and the watched hand are the same hand,
+                // by definition), so this delay only exists for this simulate button.
                 static bool simulateHeld = false;
-                if (!simulateHeld) {
-                    if (ImGui::Button("Simulate Touch (press)")) {
+                static bool simulateCountdownActive = false;
+                static std::chrono::steady_clock::time_point simulateCountdownStart;
+                constexpr float kSimulateCountdownSeconds = 2.0f;
+
+                if (simulateCountdownActive) {
+                    float remaining = kSimulateCountdownSeconds - std::chrono::duration<float>(
+                        std::chrono::steady_clock::now() - simulateCountdownStart).count();
+                    if (remaining <= 0.0f) {
                         g_touchInput.injectSimulatedPress(simulateZone);
                         simulateHeld = true;
+                        simulateCountdownActive = false;
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+                            "Get your hand in position - touching in %.1f s...", remaining);
+                    }
+                } else if (!simulateHeld) {
+                    if (ImGui::Button("Simulate Touch (press)")) {
+                        simulateCountdownActive = true;
+                        simulateCountdownStart = std::chrono::steady_clock::now();
                     }
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
