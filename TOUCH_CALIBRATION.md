@@ -131,10 +131,16 @@ typically work anyway (discrete increment/decrement events, not a continuous ang
 The Touch Calibration tab shows an **Active dial** section with the live tick count in
 large text plus a bidirectional bar (green = positive, red = negative, centered at zero,
 full deflection at +-20 ticks) - meant to be readable at a glance rather than needing to
-read small numbers, which is awkward to do with an HMD on. This currently only exists in
-the companion app's flat window; whether it also needs to be visible inside the headset
-itself (a separate change to the injected VR overlay layer, not just this app's own UI) is
-still open.
+read small numbers, which is awkward to do with an HMD on.
+
+**The same bar is also drawn directly inside the headset**, near the top of both eyes'
+camera images, whenever a dial drag is active. This works without touching the injected
+OpenXR layer at all: the bar and a forced-opaque alpha patch are drawn straight onto
+`leftFrame`/`rightFrame` (and `leftAlpha`/`rightAlpha`) in `main.cpp`, *before*
+`writeRawStereoFrame()` sends them to shared memory - the injected layer just renders
+whatever it's given, the same way it already renders the hand cutout, so anything baked
+into the frame this way shows up in VR for free. Only active in AI Segmentation mode
+(same dependency as the rest of dial tracking), and only while a dial drag is in progress.
 
 **Known real limitation, not fixed by smoothing**: initial testing found the axis angle's
 *sensitivity* can be poor, not just noisy - a 90-degree real wrist rotation moved the

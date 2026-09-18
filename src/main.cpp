@@ -1787,6 +1787,50 @@ void mainLoop() {
                     }
                 }
 
+                // Bake the active dial's tick-count bar directly into the camera frame +
+                // alpha, before either goes to shared memory below - this reuses the
+                // existing raw-frame/alpha VR pipeline entirely (no changes needed to the
+                // injected OpenXR layer): whatever's drawn here and marked fully opaque
+                // shows up in the headset exactly like the hand cutout does, since it's the
+                // same texture the API layer already renders. Only meaningful in AI
+                // Segmentation mode (leftAlpha/rightAlpha are only populated there), same
+                // as the rest of touch/dial tracking.
+                if (useSegmentation && g_activeDialDrag.active && leftFrame.data && rightFrame.data
+                        && !leftAlpha.empty() && !rightAlpha.empty()) {
+                    constexpr int kBarRangeTicksVR = 20;  // ticks shown as full deflection each way
+                    float frac = static_cast<float>(g_activeDialDrag.tickCount) / static_cast<float>(kBarRangeTicksVR);
+                    if (frac > 1.0f) frac = 1.0f;
+                    if (frac < -1.0f) frac = -1.0f;
+
+                    auto drawTickBar = [&](cv::Mat& frame, cv::Mat& alpha) {
+                        int barWidth = static_cast<int>(frame.cols * 0.5f);
+                        int barHeight = frame.rows / 30;
+                        if (barHeight < 8) barHeight = 8;
+                        int barX = (frame.cols - barWidth) / 2;
+                        int barY = frame.rows / 40;
+                        if (barY < 4) barY = 4;
+
+                        cv::Rect bgRect(barX, barY, barWidth, barHeight);
+                        cv::rectangle(frame, bgRect, cv::Scalar(40, 40, 40), cv::FILLED);  // dark background (BGR)
+                        cv::rectangle(alpha, bgRect, cv::Scalar(255), cv::FILLED);  // fully opaque - always visible
+
+                        int centerX = barX + barWidth / 2;
+                        int fillX = centerX + static_cast<int>(frac * (barWidth / 2));
+                        int fillLeft = (fillX < centerX) ? fillX : centerX;
+                        int fillRight = (fillX < centerX) ? centerX : fillX;
+                        cv::Rect fillRect(fillLeft, barY, fillRight - fillLeft, barHeight);
+                        cv::Scalar fillColor = (frac >= 0.0f) ? cv::Scalar(80, 200, 80) : cv::Scalar(80, 80, 220);  // BGR
+                        cv::rectangle(frame, fillRect, fillColor, cv::FILLED);
+
+                        cv::line(frame, cv::Point(centerX, barY), cv::Point(centerX, barY + barHeight),
+                                 cv::Scalar(255, 255, 255), 1);
+                        cv::rectangle(frame, bgRect, cv::Scalar(200, 200, 200), 1);  // border
+                    };
+
+                    drawTickBar(leftFrame, leftAlpha);
+                    drawTickBar(rightFrame, rightAlpha);
+                }
+
                 // Write RAW camera frames directly to shared memory (before CPU chroma key).
                 // By default the API layer's GPU shader handles chroma keying in HSV space;
                 // when leftAlpha/rightAlpha are non-empty, the precomputed alpha is written
