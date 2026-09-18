@@ -68,6 +68,11 @@ void TouchInput::update() {
     m_lastButtonState.assign(buttons, buttons + buttonCount);
 }
 
+bool TouchInput::isHeld(int zone) const {
+    if (zone < 0 || zone >= static_cast<int>(m_lastButtonState.size())) return false;
+    return m_lastButtonState[zone] == GLFW_PRESS;
+}
+
 bool TouchInput::pollEvent(TouchEvent& outEvent) {
     if (m_pendingEvents.empty()) return false;
     outEvent = m_pendingEvents.back();  // most recent only - see header comment

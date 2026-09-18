@@ -163,6 +163,7 @@ bool Config::load(const std::string& filename) {
                     else if (key == "IsLeftEye") touch.buttons[idx].isLeftEye = (std::stoi(value) != 0);
                     else if (key == "XNorm") touch.buttons[idx].xNorm = std::stof(value);
                     else if (key == "YNorm") touch.buttons[idx].yNorm = std::stof(value);
+                    else if (key == "Type") touch.buttons[idx].type = static_cast<TouchControlType>(std::stoi(value));
                 }
             }
         }
@@ -296,7 +297,8 @@ bool Config::save(const std::string& filename) {
         file << "Zone = " << b.zone << "\n";
         file << "IsLeftEye = " << (b.isLeftEye ? 1 : 0) << "\n";
         file << "XNorm = " << b.xNorm << "\n";
-        file << "YNorm = " << b.yNorm << "\n\n";
+        file << "YNorm = " << b.yNorm << "\n";
+        file << "Type = " << static_cast<int>(b.type) << "  # 0 = Button, 1 = Dial (rotation center)\n\n";
     }
 
     file.close();

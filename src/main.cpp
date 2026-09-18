@@ -89,6 +89,21 @@ bool g_touchCalibrationArmed = false;
 int g_touchCalibrationTargetIndex = -1;
 bool g_touchCalibrationTargetEye = true;  // true = left eye
 
+// Tracks an in-progress dial rotation: set when a touch's matched calibration entry is a
+// Dial and the touch is still held, cleared when that zone releases. Rotation is measured
+// by the hand contour's own twist (computeHandOrientationAngle), not by the fingertip's
+// position - see HandTouchTracker.h for why a twisting wrist is the more reliable signal
+// than tracking a fingertip sweeping around a pivot.
+struct ActiveDialDrag {
+    bool active = false;
+    int buttonIndex = -1;
+    int zone = -1;
+    bool isLeftEye = true;
+    float lastOrientationRad = 0.0f;
+    float totalRotationRad = 0.0f;  // accumulated since this drag started - logging only
+};
+ActiveDialDrag g_activeDialDrag;
+
 // True when FlightSimulator.exe is the actual Windows foreground window right now - used to
 // pick GPU vs CPU for AI Segmentation per-frame (GPU gives the best matte quality but directly
 // competes with MSFS's own rendering for the same GPU, causing severe FPS drops specifically
@@ -1633,10 +1648,65 @@ void mainLoop() {
                                 std::cout << "[Touch] zone " << touchEvt.zone << " -> '" << result.buttonName
                                           << "' (" << (result.isLeftEye ? "left" : "right") << " eye, x="
                                           << result.fingertipXNorm << ", y=" << result.fingertipYNorm << ")" << std::endl;
+
+                                const auto& matchedBtn = config.touch.buttons[result.buttonIndex];
+                                if (matchedBtn.type == TouchControlType::Dial) {
+                                    // A dial's position never changes no matter which way it's
+                                    // turned - the initial position match above only confirms
+                                    // *which* dial was touched. Rotation direction/amount comes
+                                    // from tracking the hand's own twist every frame for as
+                                    // long as the touch stays held (see the block below, right
+                                    // after glfwPollEvents() reads the joystick each frame).
+                                    const cv::Mat& dragMask = result.isLeftEye ? leftAlpha : rightAlpha;
+                                    float startAngle = computeHandOrientationAngle(dragMask);
+                                    if (!std::isnan(startAngle)) {
+                                        g_activeDialDrag.active = true;
+                                        g_activeDialDrag.buttonIndex = result.buttonIndex;
+                                        g_activeDialDrag.zone = touchEvt.zone;
+                                        g_activeDialDrag.isLeftEye = result.isLeftEye;
+                                        g_activeDialDrag.lastOrientationRad = startAngle;
+                                        g_activeDialDrag.totalRotationRad = 0.0f;
+                                        std::cout << "[Touch] Dial '" << matchedBtn.name
+                                                  << "' - tracking rotation while held" << std::endl;
+                                    }
+                                }
                             } else {
                                 std::cout << "[Touch] zone " << touchEvt.zone << " -> no button match ("
                                           << (result.isLeftEye ? "left" : "right") << " eye, x="
                                           << result.fingertipXNorm << ", y=" << result.fingertipYNorm << ")" << std::endl;
+                            }
+                        }
+                    }
+
+                    // Continuous dial-rotation tracking: runs every frame a drag is active,
+                    // independent of whether a new touch event arrived this frame (a dial
+                    // held and twisted doesn't generate new HID events - the button just
+                    // stays pressed - so this has to sample the mask on its own each frame).
+                    if (g_activeDialDrag.active) {
+                        if (!g_touchInput.isHeld(g_activeDialDrag.zone)) {
+                            const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                            std::cout << "[Touch] Dial '" << dialBtn.name << "' released - total rotation "
+                                      << (g_activeDialDrag.totalRotationRad * 180.0f / static_cast<float>(CV_PI))
+                                      << " deg" << std::endl;
+                            g_activeDialDrag = ActiveDialDrag();
+                        } else {
+                            const cv::Mat& dragMask = g_activeDialDrag.isLeftEye ? leftAlpha : rightAlpha;
+                            float angle = computeHandOrientationAngle(dragMask);
+                            if (!std::isnan(angle)) {
+                                float delta = angleDeltaAxis(g_activeDialDrag.lastOrientationRad, angle);
+                                g_activeDialDrag.lastOrientationRad = angle;
+                                g_activeDialDrag.totalRotationRad += delta;
+
+                                // Small dead-zone so mask noise between frames (when the hand
+                                // is essentially still) doesn't spam the log.
+                                constexpr float kNoiseThresholdRad = 0.02f;  // ~1.1 degrees
+                                if (std::fabs(delta) > kNoiseThresholdRad) {
+                                    const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                                    std::cout << "[Touch] Dial '" << dialBtn.name << "' twisted "
+                                              << (delta * 180.0f / static_cast<float>(CV_PI)) << " deg (total "
+                                              << (g_activeDialDrag.totalRotationRad * 180.0f / static_cast<float>(CV_PI))
+                                              << " deg)" << std::endl;
+                                }
                             }
                         }
                     }
@@ -2527,8 +2597,18 @@ void mainLoop() {
                 for (int i = 0; i < static_cast<int>(config.touch.buttons.size()); ++i) {
                     auto& btn = config.touch.buttons[i];
                     ImGui::PushID(i);
-                    ImGui::Text("%-20s zone=%-3d %s (%.3f, %.3f)", btn.name.c_str(), btn.zone,
+                    ImGui::Text("%-20s zone=%-3d %s %s (%.3f, %.3f)", btn.name.c_str(), btn.zone,
+                                btn.type == TouchControlType::Dial ? "Dial" : "Btn ",
                                 btn.isLeftEye ? "L" : "R", btn.xNorm, btn.yNorm);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(btn.type == TouchControlType::Dial ? "Type:Dial" : "Type:Btn")) {
+                        btn.type = (btn.type == TouchControlType::Dial) ? TouchControlType::Button
+                                                                         : TouchControlType::Dial;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Dial: rotation is tracked by hand twist while held, "
+                                           "not just a single touch position.");
+                    }
                     ImGui::SameLine();
                     if (ImGui::SmallButton(btn.isLeftEye ? "Eye:L" : "Eye:R")) {
                         btn.isLeftEye = !btn.isLeftEye;

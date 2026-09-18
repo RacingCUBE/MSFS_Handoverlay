@@ -52,6 +52,12 @@ public:
     // matters for matching.
     bool pollEvent(TouchEvent& outEvent);
 
+    // Returns true if the given button/zone index is currently held down, as of the most
+    // recent update() call. Separate from pollEvent()'s "just pressed" edge events - used
+    // for continuous dial-rotation tracking while a touch stays held (see main.cpp), where
+    // holding a dial doesn't generate new edge events on its own.
+    bool isHeld(int zone) const;
+
     const std::string& getLastError() const { return m_lastError; }
 
 private:

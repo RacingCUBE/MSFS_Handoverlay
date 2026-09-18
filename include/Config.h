@@ -84,16 +84,29 @@ struct SegmentationConfig {
     float claheClipLimit = 7.0f;     // Local contrast enhancement strength on the model's input
 };
 
-// One calibrated virtual-button location, in normalized (0-1) camera-frame coordinates for
-// one eye (0,0 = top-left). Filled in by physically touching the real button while
-// calibration "Capture" is armed (Touch Calibration tab) - see HandTouchTracker.h for how
-// it's matched against a detected fingertip at runtime.
+// Button: a single push contact. Dial: a rotary control - touching it only marks its
+// rotation center; direction/amount of turn comes from tracking the fingertip's angle
+// around that center for as long as the touch is held (see HandTouchTracker.h's
+// computeDialAngle/angleDelta and main.cpp's per-frame dial-drag handling), since a dial's
+// physical position never changes no matter which way it's turned - only continuous
+// tracking while held can tell rotation apart from a plain touch.
+enum class TouchControlType {
+    Button = 0,
+    Dial = 1
+};
+
+// One calibrated virtual control's location, in normalized (0-1) camera-frame coordinates
+// for one eye (0,0 = top-left) - for a Dial, this is its rotation center. Filled in by
+// physically touching the real control while calibration "Capture" is armed (Touch
+// Calibration tab) - see HandTouchTracker.h for how it's matched against a detected
+// fingertip at runtime.
 struct TouchButtonCalibration {
     std::string name;
-    int zone = -1;      // Capacitive touch zone this button belongs to (-1 = any/unknown)
+    int zone = -1;      // Capacitive touch zone this control belongs to (-1 = any/unknown)
     bool isLeftEye = true;
     float xNorm = 0.5f;
     float yNorm = 0.5f;
+    TouchControlType type = TouchControlType::Button;
 };
 
 struct TouchConfig {

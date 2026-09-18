@@ -14,6 +14,16 @@ real contact timing, so the camera only has to answer "where", not "whether".
 fire SimConnect events yet - that's the natural next step once matching accuracy is
 verified against the real panel.
 
+**Dials, not just buttons**: several of the real controls are rotary dials, not push
+buttons - touching one only confirms *that* it was touched, not which way it got turned,
+since a dial's calibrated position never changes regardless of rotation. Rotation is
+tracked separately, continuously, for as long as the touch stays held: not by following
+the fingertip's position around the dial (a wrist twist over a small knob doesn't
+necessarily sweep the fingertip through a wide arc), but by tracking the orientation of
+the hand's own silhouette - i.e. detecting the twist of the hand/wrist itself, frame by
+frame, and reporting the signed rotation between frames. See `computeHandOrientationAngle`
+/ `angleDeltaAxis` in HandTouchTracker.
+
 ## Hardware link: USB HID gamepad, not serial
 
 The touch microcontroller talks to the PC as a **USB HID gamepad**, one button per touch
@@ -44,11 +54,16 @@ uses for its joystick reset button, reused here rather than inventing a second m
     contour and returns the point on it farthest from the edge the arm enters from (a
     fingertip, not a plain centroid - the earlier design note flagged that a mask
     centroid is too coarse for closely-packed buttons).
-  - `matchButton()`: nearest calibrated button to that position, gated by eye and
+  - `matchButton()`: nearest calibrated button/dial to that position, gated by eye and
     (loosely) by zone, rejecting matches beyond a configurable max distance.
+  - `computeHandOrientationAngle()`: fits an ellipse to the hand contour and returns its
+    major-axis angle - a stand-in for "which way the wrist is twisted". Only meaningful
+    modulo 180 degrees (an ellipse's axis has no inherent direction), so track it with
+    `angleDeltaAxis()`, not a plain subtraction, or a rotation crossing that wrap boundary
+    looks like a sudden ~180 degree reversal.
 - `Config.h`/`Config.cpp` - `TouchConfig` (enable flag, joystick ID, entry edge, max match
-  distance) and `TouchButtonCalibration` (name, zone, eye, normalized x/y), persisted
-  under `[Touch]` / `[TouchButtonN]` sections in `settings.ini`.
+  distance) and `TouchButtonCalibration` (name, zone, eye, normalized x/y, `type`:
+  Button or Dial), persisted under `[Touch]` / `[TouchButtonN]` sections in `settings.ini`.
 - `main.cpp` - "Touch Calibration" UI tab; per-frame handling right after the AI
   segmentation masks are computed each frame.
 
@@ -61,19 +76,23 @@ uses for its joystick reset button, reused here rather than inventing a second m
    only joystick/gamepad plugged in) and click **Connect**.
 3. Set **Arm entry edge** to whichever side of the camera frame the hand/arm physically
    enters from (this rig: overhead cameras, so probably Bottom).
-4. **Add New Button**, name it, then click its **Capture** button (choose **Eye: L/R**
-   first if the button sits closer to one eye's camera).
-5. Physically touch the real button on the panel. The next touch event's detected
-   fingertip position is written into that calibration entry, along with whatever zone
-   (HID button index) the touch reported.
-6. Repeat for every button, then **Save to Config File** at the bottom of the window.
+4. **Add New Button**, name it, set its **Type** (**Type:Btn** for a push button,
+   **Type:Dial** for a rotary control - click to toggle), then click **Capture** (choose
+   **Eye: L/R** first if the control sits closer to one eye's camera).
+5. Physically touch the real control on the panel - for a dial, touch at/near its center.
+   The next touch event's detected fingertip position is written into that calibration
+   entry, along with whatever zone (HID button index) the touch reported.
+6. Repeat for every control, then **Save to Config File** at the bottom of the window.
 
 ## Verifying a match
 
-The tab shows the most recent touch event's outcome for a few seconds: which button
+The tab shows the most recent touch event's outcome for a few seconds: which button/dial
 matched (or "no match") plus the eye and normalized fingertip coordinates - this is the
 "visualize" half of current scope, alongside the same info logged to
 `C:\Temp\MSFSHandOverlay_App.log` (stdout/stderr are redirected there for the whole app).
+For a Dial match, the log continues while the touch is held: `Dial 'X' twisted N deg
+(total M deg)` for each frame's rotation past a small noise threshold, then a `released -
+total rotation` summary line once the touch lifts.
 
 ## Known limitations / next steps
 
@@ -86,5 +105,13 @@ matched (or "no match") plus the eye and normalized fingertip coordinates - this
 - `findFingertipNormalized()`'s "farthest point from the entry edge" heuristic assumes a
   single hand/arm silhouette per eye and a fixed, known entry direction; it will pick a
   wrong point if two hands are in frame at once.
+- Dial rotation's sign convention (whether a positive `angleDeltaAxis()` result is
+  clockwise or counter-clockwise as seen on screen) hasn't been verified against real
+  footage - confirm it empirically once hardware exists, the same way the VR overlay's
+  parallax direction was confirmed with real instrumented data rather than assumed.
+- Dial tracking assumes the hand's ellipse-fit orientation changes smoothly frame to
+  frame; a hand that's nearly circular in silhouette (fingers curled, seen mostly
+  end-on) gives a poorly-conditioned ellipse fit and noisy angles - worth watching for
+  once real footage is available.
 - Button names typed in **Add New Button** aren't editable afterward (delete and re-add
   to rename) - kept simple deliberately for this first pass.

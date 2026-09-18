@@ -29,6 +29,31 @@ enum class HandEntryEdge {
 cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
                                      int alphaThreshold = 32, double minContourArea = 200.0);
 
+// Orientation angle of the hand contour's major axis, in radians, using an ellipse fit -
+// a stand-in for "which way the hand/wrist is twisted", used to track dial rotation by
+// hand twist rather than by the fingertip's position. A twisting hand doesn't necessarily
+// sweep its fingertip through a wide arc, especially over a small knob, so tracking the
+// fingertip's angle around a fixed pivot misses a lot of real turns - the wrist's own
+// rotation is the more reliable signal. Returns NAN if no contour large enough to
+// plausibly be a hand was found, or if the contour has too few points to fit an ellipse.
+//
+// IMPORTANT: an ellipse's major axis is a LINE, not a direction - a hand oriented at 10
+// degrees looks identical to one at 190 degrees to this fit. The angle returned here is
+// therefore only meaningful modulo 180 degrees (pi radians); track it frame-to-frame with
+// angleDeltaAxis(), not a plain subtraction, since a naive difference would see a spurious
+// ~180 degree jump every time the true angle crosses that wrap boundary mid-rotation.
+float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold = 32,
+                                   double minContourArea = 200.0);
+
+// Signed angular difference from fromAngle to toAngle for a 180-degree-periodic axis angle
+// (see computeHandOrientationAngle), wrapped to (-pi/2, pi/2]. Uses the standard "double
+// the angle, difference, halve it" trick so a rotation crossing the axis's own wrap
+// boundary doesn't look like a sudden reversal. Sign convention (which direction comes out
+// positive) hasn't been verified against real footage yet - confirm it once hardware
+// exists, the same way the VR overlay's parallax direction was confirmed with real
+// instrumented data rather than assumed (see project notes on that fix).
+float angleDeltaAxis(float fromAngle, float toAngle);
+
 // Result of matching a detected fingertip position against the calibrated button table.
 struct TouchMatchResult {
     bool matched = false;

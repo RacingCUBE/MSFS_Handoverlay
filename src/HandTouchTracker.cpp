@@ -2,9 +2,15 @@
 #include <cmath>
 #include <limits>
 
-cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
-                                     int alphaThreshold, double minContourArea) {
-    if (alphaMask.empty()) return cv::Point2f(-1.0f, -1.0f);
+namespace {
+
+// Shared by findFingertipNormalized() and computeHandOrientationAngle(): thresholds the
+// mask and returns the largest external contour (assumed to be the hand - true for this
+// rig, fixed overhead cameras over a static instrument panel with nothing else large
+// enough to compete). Returns an empty contour if none is found or it's too small.
+std::vector<cv::Point> findHandContour(const cv::Mat& alphaMask, int alphaThreshold,
+                                        double minContourArea) {
+    if (alphaMask.empty()) return {};
 
     cv::Mat mask8u;
     if (alphaMask.type() != CV_8UC1) {
@@ -18,10 +24,8 @@ cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entr
 
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-    if (contours.empty()) return cv::Point2f(-1.0f, -1.0f);
+    if (contours.empty()) return {};
 
-    // Largest contour = the hand (assumes no other large moving object in frame, true for
-    // this rig: fixed overhead cameras over a static instrument panel).
     size_t bestIdx = 0;
     double bestArea = 0.0;
     for (size_t i = 0; i < contours.size(); ++i) {
@@ -31,9 +35,19 @@ cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entr
             bestIdx = i;
         }
     }
-    if (bestArea < minContourArea) return cv::Point2f(-1.0f, -1.0f);
+    if (bestArea < minContourArea) return {};
+    return contours[bestIdx];
+}
 
-    const auto& contour = contours[bestIdx];
+}  // namespace
+
+cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
+                                     int alphaThreshold, double minContourArea) {
+    if (alphaMask.empty()) return cv::Point2f(-1.0f, -1.0f);
+
+    std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
+    if (contour.empty()) return cv::Point2f(-1.0f, -1.0f);
+
     cv::Point best = contour[0];
     for (const auto& pt : contour) {
         switch (entryEdge) {
@@ -45,8 +59,33 @@ cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entr
     }
 
     return cv::Point2f(
-        static_cast<float>(best.x) / static_cast<float>(mask8u.cols),
-        static_cast<float>(best.y) / static_cast<float>(mask8u.rows));
+        static_cast<float>(best.x) / static_cast<float>(alphaMask.cols),
+        static_cast<float>(best.y) / static_cast<float>(alphaMask.rows));
+}
+
+float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold,
+                                   double minContourArea) {
+    if (alphaMask.empty()) return std::numeric_limits<float>::quiet_NaN();
+
+    std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
+    // fitEllipse requires at least 5 points.
+    if (contour.size() < 5) return std::numeric_limits<float>::quiet_NaN();
+
+    cv::RotatedRect ellipse = cv::fitEllipse(contour);
+    // OpenCV's RotatedRect::angle is in degrees, range [0, 180) - convert to radians for
+    // consistency with the rest of this file.
+    return ellipse.angle * static_cast<float>(CV_PI) / 180.0f;
+}
+
+float angleDeltaAxis(float fromAngle, float toAngle) {
+    // Double both angles so the 180-degree-periodic axis becomes a normal 360-degree-
+    // periodic direction, difference them with ordinary wraparound-safe subtraction, then
+    // halve the result back into axis space - the standard trick for tracking an
+    // undirected line's orientation continuously across its own wrap boundary.
+    float delta = (toAngle - fromAngle) * 2.0f;
+    while (delta > static_cast<float>(CV_PI)) delta -= 2.0f * static_cast<float>(CV_PI);
+    while (delta <= -static_cast<float>(CV_PI)) delta += 2.0f * static_cast<float>(CV_PI);
+    return delta * 0.5f;
 }
 
 TouchMatchResult matchButton(const cv::Point2f& fingertipNorm, bool isLeftEye, int zone,
