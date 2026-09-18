@@ -1,81 +1,89 @@
-// CapacitiveTouchZones - reference firmware for MSFSHandOverlay's capacitive touch panel.
+// CapacitiveTouchZones - reference firmware for MSFSHandOverlay's capacitive touch panel,
+// using an external Adafruit MPR121 breakout for touch sensing. Use this instead of
+// ../CapacitiveTouchZones_ESP32/ (the board's own built-in touch pins) if you need more
+// zones than one board's built-in touch channels cover, or prefer a dedicated touch IC -
+// MPR121s can be chained on I2C (up to 4 via the ADDR pin) for up to 48 zones.
 //
 // WHAT THIS IS FOR
 // ----------------
-// The instrument panel's virtual buttons are matched to a real fingertip position computed
-// from the overhead cameras' AI hand-segmentation mask (see HandTouchTracker.h on the PC
-// side). This firmware's only job is telling the PC *that* a touch happened and roughly
-// *where* (which coarse "zone"), so the PC can narrow its search - it deliberately does NOT
-// need one electrode per virtual button. A handful of zones (e.g. one per quadrant of the
-// panel, or even one whole-panel zone if wiring finer zones isn't practical) is enough; the
-// camera does the fine-grained disambiguation.
+// Tell the PC *that* a touch happened and roughly *where* (a coarse zone = one HID
+// button), so HandTouchTracker on the PC side (TouchInput.h/.cpp) can narrow its search
+// for which virtual button it actually was, using the camera's hand-segmentation mask.
+// This firmware doesn't need to know about individual virtual buttons at all - it just
+// mirrors each MPR121 electrode's touched/untouched state onto the matching HID button.
 //
 // HARDWARE
 // --------
-// - Any Arduino-compatible board with a USB-serial connection (Uno, Nano, ESP32, etc.)
-// - One or more Adafruit MPR121 12-channel capacitive touch breakouts (I2C). A single
-//   MPR121 gives up to 12 zones; MPR121s can be chained on the same I2C bus (up to 4, via
-//   the ADDR pin strapping) for up to 48 zones if the panel is large enough to need it.
+// - An ESP32-S2 or ESP32-S3 board with its USB port wired to the native USB peripheral
+//   (needed for USB HID output - see ARDUINO IDE SETUP below). This is the same
+//   requirement as the built-in-touch sketch; MPR121 only changes how touch is sensed,
+//   not how the result reaches the PC.
+// - One or more Adafruit MPR121 12-channel capacitive touch breakouts (I2C).
 // - Each MPR121 electrode pin wired to a conductive zone (copper tape/foil/mesh) placed
 //   behind or around the group of virtual buttons it should cover. Zones can overlap
 //   loosely with button groups - exact boundaries don't matter much since the camera does
 //   final disambiguation; the zone only needs to narrow things down.
 //
-// Requires the "Adafruit MPR121" library (Arduino Library Manager -> search "MPR121").
+// ARDUINO IDE SETUP
+// ------------------
+// - Requires the "Adafruit MPR121" library (Library Manager -> search "MPR121").
+// - Board: an ESP32-S2 or ESP32-S3 variant. Tools > USB Mode: "USB-OTG (TinyUSB)" (exact
+//   wording varies by core version) to enable native USB HID.
 //
-// PROTOCOL (PC side: see TouchInput.h/.cpp)
-// ------------------------------------------
-// One ASCII line per touch, newline-terminated:
-//     TOUCH <zone> <millis>\n
-// <zone>   = 0-based electrode/zone index that went from untouched -> touched.
-// <millis> = this board's own millis() at the moment of detection (informational only -
-//            the PC uses its own arrival time for matching, not this value).
-// Release events are NOT sent - only the leading edge of a touch matters here, since the
-// camera position at that instant is what gets matched.
-//
-// Any other line the PC might read (e.g. this sketch's own startup banner) is ignored by
-// the PC side as long as it doesn't start with "TOUCH ", so debug prints below are safe to
-// leave in.
+// PC SIDE (TouchInput.h/.cpp): reads this as a plain USB HID gamepad via GLFW's joystick
+// API - button index == zone. No serial/COM port, no custom text protocol.
 
 #include <Wire.h>
 #include "Adafruit_MPR121.h"
+#include "USB.h"
+#include "USBHIDGamepad.h"
 
 Adafruit_MPR121 cap = Adafruit_MPR121();
+USBHIDGamepad Gamepad;
 
-// Bitmask of which electrodes were touched as of the last poll, used to detect the
-// untouched->touched transition (rising edge) per electrode.
+// Bitmask of which electrodes were touched as of the last poll, used to detect state
+// changes per electrode (both edges - see mirroring note in loop() below).
 uint16_t lastTouched = 0;
 
 void setup() {
-  Serial.begin(115200);
-  while (!Serial) { /* wait for USB CDC on boards that need it (e.g. Leonardo/ESP32-S2) */ }
+  // Uncomment for debugging over the board's separate USB-serial/debug port, if it has one:
+  // Serial.begin(115200);
 
   if (!cap.begin(0x5A)) {
-    Serial.println("ERR MPR121 not found - check wiring/I2C address");
+    // No serial console to report to in the normal (non-debug) configuration - a fast
+    // blink on the board LED would be a reasonable substitute if this sketch needs to
+    // signal init failure in the field; left as a bare loop here for simplicity.
     while (true) { delay(1000); }
   }
 
-  Serial.println("READY CapacitiveTouchZones");
+  USB.begin();
+  Gamepad.begin();
 }
 
 void loop() {
   uint16_t currTouched = cap.touched();
 
-  for (uint8_t zone = 0; zone < 12; zone++) {
-    bool wasTouched = (lastTouched & (1 << zone)) != 0;
-    bool isTouched = (currTouched & (1 << zone)) != 0;
+  if (currTouched != lastTouched) {
+    for (uint8_t zone = 0; zone < 12; zone++) {
+      bool wasTouchedZone = (lastTouched & (1 << zone)) != 0;
+      bool isTouchedZone = (currTouched & (1 << zone)) != 0;
+      if (isTouchedZone == wasTouchedZone) continue;
 
-    if (isTouched && !wasTouched) {
-      Serial.print("TOUCH ");
-      Serial.print(zone);
-      Serial.print(" ");
-      Serial.println(millis());
+      // Mirror the physical touch state 1:1 (pressed for as long as actually touched)
+      // rather than a brief pulse - the PC side detects the released->pressed edge itself
+      // every frame, so it needs the state to still be "pressed" whenever it happens to
+      // poll, not just for one instant.
+      if (isTouchedZone) {
+        Gamepad.pressButton(zone);
+      } else {
+        Gamepad.releaseButton(zone);
+      }
     }
+    Gamepad.send();
+    lastTouched = currTouched;
   }
 
-  lastTouched = currTouched;
-
   // MPR121 has its own internal debounce/filtering, but a small poll delay avoids
-  // flooding the serial line if a touch is right on the detection threshold and flickers.
+  // flooding the USB HID link if a touch is right on the detection threshold and flickers.
   delay(10);
 }

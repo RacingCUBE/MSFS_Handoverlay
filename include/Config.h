@@ -98,8 +98,11 @@ struct TouchButtonCalibration {
 
 struct TouchConfig {
     bool enabled = false;
-    std::string comPort = "COM5";
-    int baudRate = 115200;
+    // GLFW joystick ID (GLFW_JOYSTICK_1..LAST) of the capacitive-touch microcontroller,
+    // which presents itself as a USB HID gamepad with one button per touch zone (see
+    // arduino/CapacitiveTouchZones_ESP32/) - no COM port involved. -1 = auto-detect the
+    // first present joystick, matching InputConfig::joystickID's convention.
+    int joystickID = -1;
     int entryEdge = 0;              // HandEntryEdge (HandTouchTracker.h): 0=Bottom,1=Top,2=Left,3=Right
     float matchMaxDistNorm = 0.15f; // Max normalized distance to accept a fingertip->button match
     std::vector<TouchButtonCalibration> buttons;

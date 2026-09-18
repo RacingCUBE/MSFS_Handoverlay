@@ -144,8 +144,7 @@ bool Config::load(const std::string& filename) {
             }
             else if (section == "Touch") {
                 if (key == "Enabled") touch.enabled = (std::stoi(value) != 0);
-                else if (key == "ComPort") touch.comPort = value;
-                else if (key == "BaudRate") touch.baudRate = std::stoi(value);
+                else if (key == "JoystickID") touch.joystickID = std::stoi(value);
                 else if (key == "EntryEdge") touch.entryEdge = std::stoi(value);
                 else if (key == "MatchMaxDistNorm") touch.matchMaxDistNorm = std::stof(value);
                 else if (key == "ButtonCount") {
@@ -286,8 +285,7 @@ bool Config::save(const std::string& filename) {
 
     file << "[Touch]\n";
     file << "Enabled = " << (touch.enabled ? 1 : 0) << "  # Enable capacitive-touch fingertip matching\n";
-    file << "ComPort = " << touch.comPort << "  # Serial port the touch microcontroller is on (e.g. COM5)\n";
-    file << "BaudRate = " << touch.baudRate << "\n";
+    file << "JoystickID = " << touch.joystickID << "  # GLFW joystick ID of the touch HID gamepad (-1 = auto-detect)\n";
     file << "EntryEdge = " << touch.entryEdge << "  # Which frame edge the arm enters from: 0=Bottom,1=Top,2=Left,3=Right\n";
     file << "MatchMaxDistNorm = " << touch.matchMaxDistNorm << "  # Max normalized distance to accept a fingertip->button match\n";
     file << "ButtonCount = " << touch.buttons.size() << "\n\n";

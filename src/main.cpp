@@ -1454,6 +1454,13 @@ void mainLoop() {
         rKeyWasPressed = rKeyPressed;
         joystickButtonWasPressed = joystickButtonPressed;
 
+        // Capacitive touch HID gamepad: must be polled here (main thread, after
+        // glfwPollEvents() ran earlier this iteration) - see TouchInput.h. Queues any
+        // newly-touched zones for the segmentation/matching block further down to consume.
+        if (config.touch.enabled) {
+            g_touchInput.update();
+        }
+
         // C key to reload config
         bool cKeyPressed = (glfwGetKey(g_window, GLFW_KEY_C) == GLFW_PRESS);
         if (cKeyPressed && !cKeyWasPressed) {
@@ -2426,23 +2433,32 @@ void mainLoop() {
                 ImGui::Separator();
 
                 ImGui::Checkbox("Enable touch matching", &config.touch.enabled);
+                ImGui::TextWrapped(
+                    "The touch microcontroller presents itself as a USB HID gamepad (one "
+                    "button per touch zone) - no COM port. Pick it below like any joystick.");
 
-                static char comPortBuf[32] = "";
-                static bool comPortBufInit = false;
-                if (!comPortBufInit) {
-                    strncpy_s(comPortBuf, config.touch.comPort.c_str(), sizeof(comPortBuf) - 1);
-                    comPortBufInit = true;
+                // List currently-present joysticks so the right one can be picked without
+                // guessing IDs - same enumeration GLFW/main.cpp already does at startup for
+                // the reset-button joystick.
+                ImGui::Text("Detected joysticks:");
+                bool anyJoystick = false;
+                for (int i = GLFW_JOYSTICK_1; i <= GLFW_JOYSTICK_LAST; i++) {
+                    if (glfwJoystickPresent(i)) {
+                        anyJoystick = true;
+                        const char* name = glfwGetJoystickName(i);
+                        ImGui::BulletText("ID %d: %s", i, name ? name : "(unnamed)");
+                    }
                 }
-                ImGui::SetNextItemWidth(100);
-                if (ImGui::InputText("COM Port", comPortBuf, sizeof(comPortBuf))) {
-                    config.touch.comPort = comPortBuf;
+                if (!anyJoystick) {
+                    ImGui::TextDisabled("(none detected)");
                 }
-                ImGui::SameLine();
+
                 ImGui::SetNextItemWidth(120);
-                ImGui::InputInt("Baud Rate", &config.touch.baudRate, 0);
+                ImGui::InputInt("Joystick ID (-1 = auto)", &config.touch.joystickID);
 
                 if (g_touchInput.isConnected()) {
-                    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Connected");
+                    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Connected (joystick ID %d)",
+                                        g_touchInput.getJoystickID());
                     ImGui::SameLine();
                     if (ImGui::Button("Disconnect")) {
                         g_touchInput.disconnect();
@@ -2454,7 +2470,7 @@ void mainLoop() {
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Connect")) {
-                        if (!g_touchInput.connect(config.touch.comPort, config.touch.baudRate)) {
+                        if (!g_touchInput.connect(config.touch.joystickID)) {
                             std::cerr << "[Touch] Connect failed: " << g_touchInput.getLastError() << std::endl;
                         }
                     }
@@ -2854,13 +2870,16 @@ int main(int argc, char* argv[]) {
         g_segmentationEngine.resetState();
     }
 
-    // Connect to the capacitive touch panel's microcontroller, if configured. Non-fatal on
-    // failure (e.g. the hardware isn't built/plugged in yet, or the port moved) - the app
-    // works normally without it, same philosophy as the GPU segmentation session being
-    // best-effort. The Touch Calibration tab's Connect button can retry later.
+    // Connect to the capacitive touch panel's microcontroller, if configured. It presents
+    // as a USB HID gamepad (one button per touch zone - see arduino/CapacitiveTouchZones_ESP32/),
+    // so "connecting" is just finding it among GLFW's enumerated joysticks. Non-fatal on
+    // failure (e.g. the hardware isn't built/plugged in yet) - the app works normally
+    // without it, same philosophy as the GPU segmentation session being best-effort. The
+    // Touch Calibration tab's Connect button can retry later.
     if (config.touch.enabled) {
-        if (g_touchInput.connect(config.touch.comPort, config.touch.baudRate)) {
-            std::cout << "[Init] Touch input connected on " << config.touch.comPort << std::endl;
+        if (g_touchInput.connect(config.touch.joystickID)) {
+            std::cout << "[Init] Touch input connected (joystick ID " << g_touchInput.getJoystickID()
+                       << ")" << std::endl;
         } else {
             std::cerr << "[Init] Touch input unavailable: " << g_touchInput.getLastError() << std::endl;
         }
