@@ -2937,6 +2937,13 @@ void mainLoop() {
                 static std::chrono::steady_clock::time_point simulateCountdownStart;
                 constexpr float kSimulateCountdownSeconds = 2.0f;
 
+                // Button drawn FIRST, at a fixed size, in every state - so its on-screen
+                // position never moves regardless of which state (press/counting down/held)
+                // is active. Status text always comes AFTER via SameLine(), so a longer or
+                // shorter message never shifts the button itself. This matters because the
+                // whole point of testing is to click, then get your hand in front of the
+                // camera without also having to hunt for a moved button afterward.
+                const ImVec2 kSimulateButtonSize(180.0f, 0.0f);
                 if (simulateCountdownActive) {
                     float remaining = kSimulateCountdownSeconds - std::chrono::duration<float>(
                         std::chrono::steady_clock::now() - simulateCountdownStart).count();
@@ -2945,23 +2952,27 @@ void mainLoop() {
                         simulateHeld = true;
                         simulateCountdownActive = false;
                     } else {
+                        ImGui::BeginDisabled();
+                        ImGui::Button("Simulate Touch", kSimulateButtonSize);
+                        ImGui::EndDisabled();
+                        ImGui::SameLine();
                         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
                             "Get your hand in position - touching in %.1f s...", remaining);
                     }
                 } else if (!simulateHeld) {
-                    if (ImGui::Button("Simulate Touch (press)")) {
+                    if (ImGui::Button("Simulate Touch", kSimulateButtonSize)) {
                         simulateCountdownActive = true;
                         simulateCountdownStart = std::chrono::steady_clock::now();
                     }
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
-                        "Zone %d simulated-held - move/twist your hand in view of the camera now",
-                        simulateZone);
-                    ImGui::SameLine();
-                    if (ImGui::Button("Release##simulate")) {
+                    if (ImGui::Button("Release##simulate", kSimulateButtonSize)) {
                         g_touchInput.injectSimulatedRelease(simulateZone);
                         simulateHeld = false;
                     }
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+                        "Zone %d simulated-held - move/twist your hand in view of the camera now",
+                        simulateZone);
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Only meaningful while not connected to a real device - "
