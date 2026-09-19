@@ -94,14 +94,13 @@ void loop() {
       // every frame, so it needs the state to still be "pressed" whenever it happens to
       // poll, not just for one instant.
       if (isTouched) {
-        Gamepad.pressButton(zone);
+        Gamepad.pressButton(zone);  // sends the HID report itself - no separate send() call
       } else {
-        Gamepad.releaseButton(zone);
+        Gamepad.releaseButton(zone);  // ditto
       }
       wasTouched[zone] = isTouched;
     }
   }
-  Gamepad.send();
 
   // Green for as long as ANY zone is touched, off otherwise - a quick "did that register
   // at all" check standing at the panel, independent of whether the PC is even connected.

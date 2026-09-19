@@ -74,12 +74,11 @@ void loop() {
       // every frame, so it needs the state to still be "pressed" whenever it happens to
       // poll, not just for one instant.
       if (isTouchedZone) {
-        Gamepad.pressButton(zone);
+        Gamepad.pressButton(zone);  // sends the HID report itself - no separate send() call
       } else {
-        Gamepad.releaseButton(zone);
+        Gamepad.releaseButton(zone);  // ditto
       }
     }
-    Gamepad.send();
     lastTouched = currTouched;
   }
 
