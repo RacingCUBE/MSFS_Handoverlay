@@ -80,8 +80,13 @@ const float touchMarginPercent = 0.15f;  // 15% above idle baseline counts as to
 bool wasTouched[16] = { false };  // sized for the max S2/S3 channel count
 
 void setup() {
-  // Uncomment to watch raw values / baselines directly (see calibration note above):
-  // Serial.begin(115200);
+  // Requires Tools > USB CDC On Boot: Enabled - otherwise Serial has nowhere to go on a
+  // board with no separate USB-UART chip (native USB only). With it enabled, a normal
+  // COM port shows up alongside the HID gamepad on the same cable - open Serial Monitor
+  // at 115200 baud and select that port.
+  Serial.begin(115200);
+  delay(1500);  // give the USB CDC connection a moment to enumerate before printing
+  Serial.println("CapacitiveTouchZones_ESP32 starting - keep hands off the pad...");
 
   neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // off - no pinMode() needed, neopixelWrite handles setup
 
@@ -96,15 +101,25 @@ void setup() {
       delay(5);
     }
     touchBaseline[zone] = sum / kCalibrationSamples;
-    // Serial.printf("zone %d idle baseline=%u\n", zone, touchBaseline[zone]);
+    Serial.printf("zone %d (GPIO%d) idle baseline=%u, touch threshold=%u\n",
+                  zone, touchPins[zone], touchBaseline[zone],
+                  touchBaseline[zone] + static_cast<uint32_t>(touchBaseline[zone] * touchMarginPercent));
   }
 
   USB.begin();
   Gamepad.begin();
 }
 
+// Prints once every kPrintIntervalMs regardless of how often loop() itself runs (every
+// 10ms) - a live raw-value stream is far more useful for diagnosing "why doesn't this
+// register at all" than a one-time calibration printout, but printing every 10ms would
+// flood the monitor and be unreadable.
+unsigned long lastPrintMs = 0;
+const unsigned long kPrintIntervalMs = 200;
+
 void loop() {
   bool anyTouched = false;
+  bool shouldPrint = (millis() - lastPrintMs) >= kPrintIntervalMs;
 
   for (int zone = 0; zone < numZones; zone++) {
     uint32_t raw = touchRead(touchPins[zone]);  // touch_value_t is uint32_t on S2/S3 -
@@ -114,6 +129,12 @@ void loop() {
     uint32_t threshold = touchBaseline[zone] + static_cast<uint32_t>(touchBaseline[zone] * touchMarginPercent);
     bool isTouched = raw > threshold;
     if (isTouched) anyTouched = true;
+
+    if (shouldPrint) {
+      Serial.printf("zone %d (GPIO%d): raw=%u  baseline=%u  threshold=%u  touched=%s\n",
+                    zone, touchPins[zone], raw, touchBaseline[zone], threshold,
+                    isTouched ? "YES" : "no");
+    }
 
     if (isTouched != wasTouched[zone]) {
       // Mirror the physical touch state 1:1 (pressed for as long as actually touched)
@@ -127,6 +148,9 @@ void loop() {
       }
       wasTouched[zone] = isTouched;
     }
+  }
+  if (shouldPrint) {
+    lastPrintMs = millis();
   }
 
   // Green for as long as ANY zone is touched, off otherwise - a quick "did that register
