@@ -235,6 +235,19 @@ the companion app's flat window; whether it also needs to be visible inside the 
 itself (a separate change to the injected VR overlay layer, not just this app's own UI) is
 still open.
 
+## Confidence-weighted smoothing
+
+`computeHandOrientationAngle()` also reports a per-frame confidence in [0,1], derived from
+`cv::fitEllipse`'s own elongation ratio (0 = circular/no defined axis, 1 = well-elongated).
+`AxisAngleFilter::update()` scales its effective smoothing weight by this confidence, so a
+poorly-conditioned frame (e.g. a compact grip on a small knob) moves the filtered angle
+less than a well-conditioned one at the same base smoothing setting - a frame the fit
+can't really trust no longer gets treated the same as a clean one. Never fully freezes
+even at confidence 0 (a small floor keeps it slowly adapting). Visible live in the tab's
+diagnostics as `conf` next to the axis reading - watch this while changing grip: if it
+stays low with a particular grip and higher with a flatter one, that confirms grip shape
+is the actual limiting factor, not transient noise.
+
 **Known real limitation, not fixed by smoothing**: initial testing found the axis angle's
 *sensitivity* can be poor, not just noisy - a 90-degree real wrist rotation moved the
 reading only ~10 degrees in one test. This is consistent with an ellipse fit's angle

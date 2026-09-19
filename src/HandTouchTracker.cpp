@@ -86,14 +86,31 @@ float computeHandDirectionAngle(const cv::Mat& alphaMask, HandEntryEdge entryEdg
 }
 
 float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold,
-                                   double minContourArea) {
-    if (alphaMask.empty()) return std::numeric_limits<float>::quiet_NaN();
+                                   double minContourArea, float* outConfidence) {
+    if (alphaMask.empty()) {
+        if (outConfidence) *outConfidence = 0.0f;
+        return std::numeric_limits<float>::quiet_NaN();
+    }
 
     std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
     // fitEllipse requires at least 5 points.
-    if (contour.size() < 5) return std::numeric_limits<float>::quiet_NaN();
+    if (contour.size() < 5) {
+        if (outConfidence) *outConfidence = 0.0f;
+        return std::numeric_limits<float>::quiet_NaN();
+    }
 
     cv::RotatedRect ellipse = cv::fitEllipse(contour);
+
+    if (outConfidence) {
+        float w = ellipse.size.width;
+        float h = ellipse.size.height;
+        float major = (w > h) ? w : h;
+        float minor = (w > h) ? h : w;
+        // 0 = perfectly circular (minor == major, no defined axis at all), approaching 1
+        // as the shape elongates - see header comment for why this matters.
+        *outConfidence = (major > 0.0f) ? (1.0f - (minor / major)) : 0.0f;
+    }
+
     // OpenCV's RotatedRect::angle is in degrees, range [0, 180) - convert to radians for
     // consistency with the rest of this file.
     return ellipse.angle * static_cast<float>(CV_PI) / 180.0f;
@@ -110,7 +127,7 @@ float angleDeltaAxis(float fromAngle, float toAngle) {
     return delta * 0.5f;
 }
 
-float AxisAngleFilter::update(float rawAngle, float alpha) {
+float AxisAngleFilter::update(float rawAngle, float alpha, float confidence) {
     float x = std::cos(2.0f * rawAngle);
     float y = std::sin(2.0f * rawAngle);
     if (!m_initialized) {
@@ -118,8 +135,14 @@ float AxisAngleFilter::update(float rawAngle, float alpha) {
         m_y = y;
         m_initialized = true;
     } else {
-        m_x = alpha * x + (1.0f - alpha) * m_x;
-        m_y = alpha * y + (1.0f - alpha) * m_y;
+        // Never fully freeze even at confidence 0 - a long run of poorly-conditioned
+        // frames should still slowly adapt, just far more cautiously than a clean frame.
+        constexpr float kMinEffectiveAlpha = 0.02f;
+        float effectiveAlpha = alpha * confidence;
+        if (effectiveAlpha < kMinEffectiveAlpha) effectiveAlpha = kMinEffectiveAlpha;
+        if (effectiveAlpha > 1.0f) effectiveAlpha = 1.0f;
+        m_x = effectiveAlpha * x + (1.0f - effectiveAlpha) * m_x;
+        m_y = effectiveAlpha * y + (1.0f - effectiveAlpha) * m_y;
     }
     return std::atan2(m_y, m_x) * 0.5f;
 }

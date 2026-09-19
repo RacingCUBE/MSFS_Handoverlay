@@ -42,8 +42,15 @@ cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entr
 // therefore only meaningful modulo 180 degrees (pi radians); track it frame-to-frame with
 // angleDeltaAxis(), not a plain subtraction, since a naive difference would see a spurious
 // ~180 degree jump every time the true angle crosses that wrap boundary mid-rotation.
+//
+// If outConfidence is non-null, also reports how elongated the fitted ellipse was this
+// frame, in [0,1]: 0 = perfectly circular (no defined axis at all - the angle is
+// essentially meaningless noise), approaching 1 as the shape elongates. A tight grip on a
+// small knob tends to look compact/near-circular, which is exactly when this angle is
+// least trustworthy - meant to feed AxisAngleFilter::update()'s confidence parameter so a
+// poorly-conditioned frame is trusted less, rather than treated the same as a clean one.
 float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold = 32,
-                                   double minContourArea = 200.0);
+                                   double minContourArea = 200.0, float* outConfidence = nullptr);
 
 // Signed angular difference from fromAngle to toAngle for a 180-degree-periodic axis angle
 // (see computeHandOrientationAngle), wrapped to (-pi/2, pi/2]. Uses the standard "double
@@ -79,10 +86,15 @@ public:
     void reset() { m_initialized = false; }
 
     // Feeds one new raw angle sample (radians) and returns the filtered angle (radians).
-    // alpha in (0, 1]: weight given to the newest sample - 1.0 is no smoothing at all,
-    // smaller values smooth more but add more lag. Passed per-call (not fixed at
+    // alpha in (0, 1]: base weight given to the newest sample - 1.0 is no smoothing at
+    // all, smaller values smooth more but add more lag. Passed per-call (not fixed at
     // construction) so it can be a live-tunable UI setting.
-    float update(float rawAngle, float alpha);
+    // confidence in [0,1] (default 1 - fully trust the sample, matching the original
+    // behavior when omitted): scales alpha down further for a poorly-conditioned sample
+    // (see computeHandOrientationAngle's outConfidence) - a low-confidence reading moves
+    // the filtered value less than a high-confidence one would at the same base alpha.
+    // Floored internally so the filter never fully freezes even at confidence 0.
+    float update(float rawAngle, float alpha, float confidence = 1.0f);
 
 private:
     bool m_initialized = false;

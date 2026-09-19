@@ -152,6 +152,10 @@ struct LiveHandDiagnostics {
     cv::Point2f fingertipRight{-1.0f, -1.0f};
     float orientationLeftDeg = std::numeric_limits<float>::quiet_NaN();   // axis angle, 0-180
     float orientationRightDeg = std::numeric_limits<float>::quiet_NaN();
+    // 0 = ellipse fit was circular/poorly-conditioned that frame (axis angle untrustworthy),
+    // 1 = well-elongated. Feeds AxisAngleFilter's confidence-weighted smoothing.
+    float orientationLeftConfidence = 0.0f;
+    float orientationRightConfidence = 0.0f;
     float directionLeftDeg = std::numeric_limits<float>::quiet_NaN();     // +-180, see computeHandDirectionAngle
     float directionRightDeg = std::numeric_limits<float>::quiet_NaN();
 };
@@ -1662,20 +1666,23 @@ void mainLoop() {
                     g_liveHandDiag.fingertipLeft = findFingertipNormalized(leftAlpha, diagEdge);
                     g_liveHandDiag.fingertipRight = findFingertipNormalized(rightAlpha, diagEdge);
 
-                    float orientLeft = computeHandOrientationAngle(leftAlpha);
-                    float orientRight = computeHandOrientationAngle(rightAlpha);
+                    float confLeft = 0.0f, confRight = 0.0f;
+                    float orientLeft = computeHandOrientationAngle(leftAlpha, 32, 200.0, &confLeft);
+                    float orientRight = computeHandOrientationAngle(rightAlpha, 32, 200.0, &confRight);
+                    g_liveHandDiag.orientationLeftConfidence = confLeft;
+                    g_liveHandDiag.orientationRightConfidence = confRight;
                     if (std::isnan(orientLeft)) {
                         g_axisFilterLeftDiag.reset();  // no hand this frame - don't bias next detection
                         g_liveHandDiag.orientationLeftDeg = orientLeft;
                     } else {
-                        float filtered = g_axisFilterLeftDiag.update(orientLeft, config.touch.axisFilterAlpha);
+                        float filtered = g_axisFilterLeftDiag.update(orientLeft, config.touch.axisFilterAlpha, confLeft);
                         g_liveHandDiag.orientationLeftDeg = filtered * 180.0f / static_cast<float>(CV_PI);
                     }
                     if (std::isnan(orientRight)) {
                         g_axisFilterRightDiag.reset();
                         g_liveHandDiag.orientationRightDeg = orientRight;
                     } else {
-                        float filtered = g_axisFilterRightDiag.update(orientRight, config.touch.axisFilterAlpha);
+                        float filtered = g_axisFilterRightDiag.update(orientRight, config.touch.axisFilterAlpha, confRight);
                         g_liveHandDiag.orientationRightDeg = filtered * 180.0f / static_cast<float>(CV_PI);
                     }
 
@@ -1749,15 +1756,16 @@ void mainLoop() {
                                     // long as the touch stays held (see the block below, right
                                     // after glfwPollEvents() reads the joystick each frame).
                                     const cv::Mat& dragMask = result.isLeftEye ? leftAlpha : rightAlpha;
-                                    float startAngle = computeHandOrientationAngle(dragMask);
+                                    float startConfidence = 0.0f;
+                                    float startAngle = computeHandOrientationAngle(dragMask, 32, 200.0, &startConfidence);
                                     if (!std::isnan(startAngle)) {
                                         g_activeDialDrag = ActiveDialDrag();  // fresh filter/angle state each grab
                                         g_activeDialDrag.active = true;
                                         g_activeDialDrag.buttonIndex = result.buttonIndex;
                                         g_activeDialDrag.zone = touchEvt.zone;
                                         g_activeDialDrag.isLeftEye = result.isLeftEye;
-                                        g_activeDialDrag.lastOrientationRad =
-                                            g_activeDialDrag.filter.update(startAngle, config.touch.axisFilterAlpha);
+                                        g_activeDialDrag.lastOrientationRad = g_activeDialDrag.filter.update(
+                                            startAngle, config.touch.axisFilterAlpha, startConfidence);
 
                                         if (static_cast<int>(g_dialSessions.size()) <= result.buttonIndex) {
                                             g_dialSessions.resize(result.buttonIndex + 1);
@@ -1812,9 +1820,11 @@ void mainLoop() {
                             g_activeDialDrag = ActiveDialDrag();
                         } else {
                             const cv::Mat& dragMask = g_activeDialDrag.isLeftEye ? leftAlpha : rightAlpha;
-                            float rawAngle = computeHandOrientationAngle(dragMask);
+                            float rawConfidence = 0.0f;
+                            float rawAngle = computeHandOrientationAngle(dragMask, 32, 200.0, &rawConfidence);
                             if (!std::isnan(rawAngle)) {
-                                float angle = g_activeDialDrag.filter.update(rawAngle, config.touch.axisFilterAlpha);
+                                float angle = g_activeDialDrag.filter.update(
+                                    rawAngle, config.touch.axisFilterAlpha, rawConfidence);
                                 float delta = angleDeltaAxis(g_activeDialDrag.lastOrientationRad, angle);
                                 g_activeDialDrag.lastOrientationRad = angle;
                                 session.totalRotationRad += delta;
@@ -2764,6 +2774,7 @@ void mainLoop() {
                         bool isLeft = (eyeIdx == 0);
                         const cv::Point2f& fingertip = isLeft ? g_liveHandDiag.fingertipLeft : g_liveHandDiag.fingertipRight;
                         float orientation = isLeft ? g_liveHandDiag.orientationLeftDeg : g_liveHandDiag.orientationRightDeg;
+                        float orientConfidence = isLeft ? g_liveHandDiag.orientationLeftConfidence : g_liveHandDiag.orientationRightConfidence;
                         float direction = isLeft ? g_liveHandDiag.directionLeftDeg : g_liveHandDiag.directionRightDeg;
 
                         ImGui::Text("%s eye:", isLeft ? "Left" : "Right");
@@ -2775,7 +2786,16 @@ void mainLoop() {
                         }
                         ImGui::SameLine();
                         if (!std::isnan(orientation)) {
-                            ImGui::Text("| axis %.1f deg (0-180)", orientation);
+                            ImGui::Text("| axis %.1f deg (0-180, conf %.2f)", orientation, orientConfidence);
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("conf: how elongated the hand silhouette's ellipse "
+                                                   "fit was this frame (0 = circular/untrustworthy, "
+                                                   "1 = well-elongated). Low values mean the axis "
+                                                   "angle is being trusted less by the smoothing "
+                                                   "filter, not just noisier - a low number staying "
+                                                   "low with a particular grip confirms that grip is "
+                                                   "the problem, not transient noise.");
+                            }
                         } else {
                             ImGui::TextDisabled("| axis: n/a");
                         }
