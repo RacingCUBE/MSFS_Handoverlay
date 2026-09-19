@@ -148,6 +148,7 @@ bool Config::load(const std::string& filename) {
                 else if (key == "EntryEdge") touch.entryEdge = std::stoi(value);
                 else if (key == "MatchMaxDistNorm") touch.matchMaxDistNorm = std::stof(value);
                 else if (key == "AxisFilterAlpha") touch.axisFilterAlpha = std::stof(value);
+                else if (key == "DialTickThresholdDeg") touch.dialTickThresholdDeg = std::stof(value);
                 else if (key == "ButtonCount") {
                     int count = std::stoi(value);
                     if (count > 0) touch.buttons.resize(static_cast<size_t>(count));
@@ -291,6 +292,7 @@ bool Config::save(const std::string& filename) {
     file << "EntryEdge = " << touch.entryEdge << "  # Which frame edge the arm enters from: 0=Bottom,1=Top,2=Left,3=Right\n";
     file << "MatchMaxDistNorm = " << touch.matchMaxDistNorm << "  # Max normalized distance to accept a fingertip->button match\n";
     file << "AxisFilterAlpha = " << touch.axisFilterAlpha << "  # Dial-rotation angle smoothing: 1.0 = none, smaller = smoother/more lag\n";
+    file << "DialTickThresholdDeg = " << touch.dialTickThresholdDeg << "  # Degrees of accumulated rotation per dial tick\n";
     file << "ButtonCount = " << touch.buttons.size() << "\n\n";
     for (size_t i = 0; i < touch.buttons.size(); ++i) {
         const auto& b = touch.buttons[i];

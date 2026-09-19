@@ -150,6 +150,22 @@ labeled "released - grab again to continue") for the same timeout window after y
 go, instead of vanishing immediately - so the tick count doesn't look lost when the
 session is actually still alive and waiting for you to continue.
 
+**Side effect worth knowing about**: the accumulator sums *every* frame's motion toward
+the tick threshold, not just frames whose own delta happens to cross it - far more
+sensitive than the old per-frame-gated approach at the same threshold value. Real testing
+found this alone pushed typical turns from a "-25 to +25" feel to "200+ and climbing".
+`config.touch.dialTickThresholdDeg` (UI: **Degrees per tick**) exists specifically to
+compensate - raised from an old effective ~1.1 degrees to a default of 8 degrees, and
+live-tunable since the right value depends on real footage, not something derivable up
+front.
+
+**A related, separately-caused bug also found and fixed**: simulated touch state used to
+share storage with the real device's button tracking, so clicking Connect or Disconnect
+on a real joystick (even just to stop it interfering with a simulated test) silently
+ended an in-progress simulated hold - `TouchInput::isHeld()` would report "not held" with
+no Release ever clicked. Simulated holds now live in their own storage
+(`m_simulatedHeldZones`), untouched by connect()/disconnect()/update().
+
 ## Dial rotation as tick counts, not degrees
 
 Rather than reporting a precise rotation amount, dial tracking now counts simple +1/-1

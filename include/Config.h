@@ -123,6 +123,13 @@ struct TouchConfig {
     // more lag. Live-tunable since the right value is found empirically against real
     // footage, not derived analytically.
     float axisFilterAlpha = 0.3f;
+    // Degrees of accumulated (filtered) rotation that count as one dial tick. The
+    // accumulator design (see DialSession in main.cpp) sums every frame's motion rather
+    // than requiring one frame's delta alone to cross this - much more sensitive than the
+    // old per-frame-threshold approach for the same raw value, so this needs its own,
+    // separately-tuned, larger default. Live-tunable for the same reason axisFilterAlpha
+    // is: the right value is found empirically against real footage.
+    float dialTickThresholdDeg = 8.0f;
     std::vector<TouchButtonCalibration> buttons;
 };
 

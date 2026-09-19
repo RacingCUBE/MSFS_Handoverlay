@@ -1819,7 +1819,15 @@ void mainLoop() {
                                 // alone, even though the total across those frames is real and
                                 // should count. A while-loop (not if) handles a very fast twist
                                 // that covers several detents' worth of rotation in one frame.
-                                constexpr float kTickThresholdRad = 0.02f;  // ~1.1 degrees per tick
+                                // Was a hardcoded 0.02 rad (~1.1 deg) - real testing found the
+                                // accumulator design (sums every frame's motion, not just
+                                // frames whose own delta crosses the threshold) is far more
+                                // sensitive than the old per-frame-gated approach at the same
+                                // raw value, producing 200+ ticks for motion that used to read
+                                // -25 to +25. Now a live-tunable, persisted setting instead of
+                                // a guessed constant, same reasoning as axisFilterAlpha.
+                                float kTickThresholdRad = config.touch.dialTickThresholdDeg
+                                                           * static_cast<float>(CV_PI) / 180.0f;
                                 const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
                                 while (session.pendingRotationRad > kTickThresholdRad) {
                                     session.tickCount += 1;
@@ -2689,6 +2697,14 @@ void mainLoop() {
                     ImGui::SetTooltip("1.0 = no smoothing. Lower = smoother but more lag - "
                                        "affects both the 'axis' readout below and real dial "
                                        "rotation tracking. Tune empirically against real footage.");
+                }
+                ImGui::SetNextItemWidth(150);
+                ImGui::SliderFloat("Degrees per tick", &config.touch.dialTickThresholdDeg, 1.0f, 30.0f, "%.1f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("How much accumulated rotation counts as one dial tick. "
+                                       "Higher = fewer, coarser ticks per turn - raise this if "
+                                       "the tick count climbs too fast for how much you actually "
+                                       "turned; lower it if turns feel unresponsive.");
                 }
 
                 ImGui::Spacing();
