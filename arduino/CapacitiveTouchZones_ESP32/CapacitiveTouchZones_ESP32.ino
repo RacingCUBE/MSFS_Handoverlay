@@ -37,6 +37,17 @@
 // detected) - the OPPOSITE of the original/plain ESP32, where it decreases. This sketch is
 // only correct for S2/S3; double-check before reusing threshold logic from plain-ESP32
 // example code.
+//
+// BUILT-IN LED - CHECK YOUR BOARD
+// --------------------------------
+// This lights LED_BUILTIN whenever any zone is currently touched, for a quick physical
+// "yes, contact registered" check without needing a PC connected at all. LED_BUILTIN
+// works as a plain on/off LED on most ESP32-S2 boards (Lolin S2 Mini, ESP32-S2-Saola-1,
+// etc.) - but a few S2 boards (notably Adafruit's Feather ESP32-S2 line) have NO plain
+// LED and use an addressable NeoPixel instead, which LED_BUILTIN either won't compile for
+// or won't light correctly with plain digitalWrite(). If your board is one of those,
+// replace the digitalWrite(LED_BUILTIN, ...) calls below with Adafruit_NeoPixel calls
+// instead (set the pixel to a solid color when touched, off when not).
 
 #include "USB.h"
 #include "USBHIDGamepad.h"
@@ -60,14 +71,20 @@ void setup() {
   // Serial.begin(115200);
   // for (int i = 0; i < numZones; i++) Serial.printf("zone %d raw=%u\n", i, touchRead(touchPins[i]));
 
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
   USB.begin();
   Gamepad.begin();
 }
 
 void loop() {
+  bool anyTouched = false;
+
   for (int zone = 0; zone < numZones; zone++) {
     uint16_t raw = touchRead(touchPins[zone]);
     bool isTouched = raw > touchThreshold;
+    if (isTouched) anyTouched = true;
 
     if (isTouched != wasTouched[zone]) {
       // Mirror the physical touch state 1:1 (pressed for as long as actually touched)
@@ -83,6 +100,10 @@ void loop() {
     }
   }
   Gamepad.send();
+
+  // On for as long as ANY zone is touched, off otherwise - a quick "did that register at
+  // all" check standing at the panel, independent of whether the PC is even connected.
+  digitalWrite(LED_BUILTIN, anyTouched ? HIGH : LOW);
 
   delay(10);
 }
