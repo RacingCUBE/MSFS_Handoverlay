@@ -32,9 +32,12 @@ Steps:
 1. Calibrate a Dial control normally (see above).
 2. Touch Calibration tab -> **MSFS connection** section -> **Connect** (MSFS must already
    be running and loaded into a flight).
-3. In that dial's row, click **Altitude preset** to fill in `AP_ALT_VAR_INC`/
-   `AP_ALT_VAR_DEC` - the standard, long-established autopilot altitude knob events - or
-   type any other event name pair directly into the **Inc event**/**Dec event** fields.
+3. In that dial's row, pick an entry from the **SimConnect action** dropdown - presets
+   scoped to what a basic trainer (e.g. the default Cessna 152) actually has: altimeter
+   baro/Kollsman, COM1/NAV1 MHz and kHz digits, the four transponder digits, and the
+   elevator trim wheel. Autopilot altitude is included too, for aircraft that have one -
+   the 152 doesn't. Selecting **Custom...** reveals typed Inc/Dec event fields as a
+   fallback for anything not covered by the preset list.
 4. **Save to Config File** to persist the mapping (`SimConnectIncEvent`/
    `SimConnectDecEvent` under that dial's `[TouchButtonN]` section).
 5. Turn the dial - each tick now fires the mapped event, if SimConnect is connected and
@@ -48,6 +51,19 @@ standard events at all - verified per-aircraft, not something this wrapper can d
 The community fix for that class of aircraft is generally a WASM-module-based H:Event
 bridge (e.g. MobiFlight's), which is a materially larger, different mechanism than plain
 SimConnect client events - not implemented here.
+
+**Verification note on the preset event names**: `SimConnect_Open`/`MapClientEventToSimEvent`/
+`TransmitClientEvent` themselves were verified directly against the installed SDK's C++
+header before writing any code. The actual *event name strings* in the preset dropdown
+(`KOHLSMAN_INC`, `COM_RADIO_WHOLE_INC`, `XPNDR_1000_INC`, `ELEV_TRIM_UP`, etc.) could not
+be verified the same way - this SDK install doesn't ship the standard events list as
+local documentation, only the connection API headers. These are well-established,
+widely-referenced names from Microsoft's online SimConnect docs, but unlike the API
+calls, they're not confirmed against a file on this machine - worth an eye out for a
+silent no-op (event name typo'd or simply wrong) versus "aircraft doesn't support it" if
+one of these doesn't do anything when tested. Note also `KOHLSMAN_INC`/`DEC`'s
+well-documented misspelling: the instrument is a "Kollsman window", but Microsoft's own
+event name has used this spelling since the earliest SimConnect SDKs.
 
 **Dials, not just buttons**: several of the real controls are rotary dials, not push
 buttons - touching one only confirms *that* it was touched, not which way it got turned,

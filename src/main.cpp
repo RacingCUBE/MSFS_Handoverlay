@@ -2904,6 +2904,32 @@ void mainLoop() {
                     }
                 }
 
+                // Preset SimConnect event pairs for a Dial control - a dropdown instead of
+                // free-text fields, since typing a raw event name invites typos and there's
+                // no local documentation shipped with the SDK to check spelling against (see
+                // TOUCH_CALIBRATION.md's note on KOHLSMAN_INC/DEC's well-known misspelling).
+                // Scoped to controls a basic trainer like the Cessna 152 actually has - no
+                // autopilot presets beyond Altitude, since that aircraft doesn't have one;
+                // Altitude is kept for other aircraft that do. "Custom..." is the one
+                // remaining typed escape hatch, for anything not covered here.
+                struct SimConnectPreset { const char* label; const char* incEvent; const char* decEvent; };
+                static const SimConnectPreset kSimConnectPresets[] = {
+                    { "None (log/visualize only)", "", "" },
+                    { "Altimeter baro / Kollsman window", "KOHLSMAN_INC", "KOHLSMAN_DEC" },
+                    { "COM1 frequency - MHz", "COM_RADIO_WHOLE_INC", "COM_RADIO_WHOLE_DEC" },
+                    { "COM1 frequency - kHz", "COM_RADIO_FRACT_INC", "COM_RADIO_FRACT_DEC" },
+                    { "NAV1 frequency - MHz", "NAV1_RADIO_WHOLE_INC", "NAV1_RADIO_WHOLE_DEC" },
+                    { "NAV1 frequency - kHz", "NAV1_RADIO_FRACT_INC", "NAV1_RADIO_FRACT_DEC" },
+                    { "Transponder - thousands digit", "XPNDR_1000_INC", "XPNDR_1000_DEC" },
+                    { "Transponder - hundreds digit", "XPNDR_100_INC", "XPNDR_100_DEC" },
+                    { "Transponder - tens digit", "XPNDR_10_INC", "XPNDR_10_DEC" },
+                    { "Transponder - units digit", "XPNDR_1_INC", "XPNDR_1_DEC" },
+                    { "Elevator trim wheel", "ELEV_TRIM_UP", "ELEV_TRIM_DN" },
+                    { "Autopilot altitude (aircraft with an AP only)", "AP_ALT_VAR_INC", "AP_ALT_VAR_DEC" },
+                    { "Custom...", nullptr, nullptr },  // nullptr sentinel - reveals typed fields below
+                };
+                constexpr int kNumSimConnectPresets = sizeof(kSimConnectPresets) / sizeof(kSimConnectPresets[0]);
+
                 int deleteIndex = -1;
                 for (int i = 0; i < static_cast<int>(config.touch.buttons.size()); ++i) {
                     auto& btn = config.touch.buttons[i];
@@ -2936,35 +2962,54 @@ void mainLoop() {
                     }
 
                     // SimConnect event mapping - only meaningful for Dial controls, where
-                    // each +1/-1 tick can fire a real MSFS control event. Empty fields (the
-                    // default) keep the original log/visualize-only behavior. Buffers are
-                    // resynced from the string every frame rather than kept as static
-                    // per-row state, since this loop runs over a dynamically-sized vector -
-                    // a static buffer would be wrongly shared across rows.
+                    // each +1/-1 tick can fire a real MSFS control event. "None" (the
+                    // default) keeps the original log/visualize-only behavior.
                     if (btn.type == TouchControlType::Dial) {
-                        char incBuf[64];
-                        strncpy_s(incBuf, btn.simConnectIncEvent.c_str(), sizeof(incBuf) - 1);
-                        ImGui::SetNextItemWidth(160);
-                        if (ImGui::InputText("Inc event", incBuf, sizeof(incBuf))) {
-                            btn.simConnectIncEvent = incBuf;
+                        int currentPreset = kNumSimConnectPresets - 1;  // default: Custom
+                        for (int p = 0; p < kNumSimConnectPresets - 1; ++p) {
+                            if (btn.simConnectIncEvent == kSimConnectPresets[p].incEvent &&
+                                btn.simConnectDecEvent == kSimConnectPresets[p].decEvent) {
+                                currentPreset = p;
+                                break;
+                            }
                         }
-                        ImGui::SameLine();
-                        char decBuf[64];
-                        strncpy_s(decBuf, btn.simConnectDecEvent.c_str(), sizeof(decBuf) - 1);
-                        ImGui::SetNextItemWidth(160);
-                        if (ImGui::InputText("Dec event", decBuf, sizeof(decBuf))) {
-                            btn.simConnectDecEvent = decBuf;
+
+                        ImGui::SetNextItemWidth(280);
+                        if (ImGui::BeginCombo("SimConnect action", kSimConnectPresets[currentPreset].label)) {
+                            for (int p = 0; p < kNumSimConnectPresets; ++p) {
+                                bool isSelected = (p == currentPreset);
+                                if (ImGui::Selectable(kSimConnectPresets[p].label, isSelected)) {
+                                    if (kSimConnectPresets[p].incEvent != nullptr) {
+                                        btn.simConnectIncEvent = kSimConnectPresets[p].incEvent;
+                                        btn.simConnectDecEvent = kSimConnectPresets[p].decEvent;
+                                    }
+                                    // Custom (incEvent == nullptr): leave existing fields as-is,
+                                    // the typed boxes below take over for editing them.
+                                }
+                                if (isSelected) ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
                         }
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("Altitude preset")) {
-                            btn.simConnectIncEvent = "AP_ALT_VAR_INC";
-                            btn.simConnectDecEvent = "AP_ALT_VAR_DEC";
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Fills in the standard MSFS autopilot altitude "
-                                               "knob events. Works on default/basic aircraft - "
-                                               "some complex add-on aircraft implement their own "
-                                               "systems and won't respond to these.");
+
+                        if (currentPreset == kNumSimConnectPresets - 1) {
+                            // Custom: only remaining place a raw event name can be typed -
+                            // resynced from the string every frame rather than kept as
+                            // static per-row state, since this loop runs over a
+                            // dynamically-sized vector (a static buffer would be wrongly
+                            // shared across rows).
+                            char incBuf[64];
+                            strncpy_s(incBuf, btn.simConnectIncEvent.c_str(), sizeof(incBuf) - 1);
+                            ImGui::SetNextItemWidth(140);
+                            if (ImGui::InputText("Inc event", incBuf, sizeof(incBuf))) {
+                                btn.simConnectIncEvent = incBuf;
+                            }
+                            ImGui::SameLine();
+                            char decBuf[64];
+                            strncpy_s(decBuf, btn.simConnectDecEvent.c_str(), sizeof(decBuf) - 1);
+                            ImGui::SetNextItemWidth(140);
+                            if (ImGui::InputText("Dec event", decBuf, sizeof(decBuf))) {
+                                btn.simConnectDecEvent = decBuf;
+                            }
                         }
                     }
                     ImGui::PopID();
