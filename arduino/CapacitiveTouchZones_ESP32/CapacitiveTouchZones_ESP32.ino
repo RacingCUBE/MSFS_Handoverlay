@@ -64,20 +64,40 @@ const uint8_t touchPins[] = { 1 };
 const int numZones = sizeof(touchPins) / sizeof(touchPins[0]);
 
 // Raw touchRead() values vary a lot by board, trace length, and how large/conductive each
-// zone's copper area is - there's no universal correct number here. Find yours by
-// uncommenting the raw-value printout in setup() below (over the board's separate
-// USB-serial/debug port, if it has one, or a temporary Serial.begin() here) and watching
-// values with each zone untouched vs. touched.
-const uint16_t touchThreshold = 40000;
+// zone's copper area is - there's no universal correct fixed number, and a wrong guess
+// looks exactly like "inverted" behavior (LED off when touched) if the idle/untouched
+// reading on your specific board already happens to sit above whatever constant was
+// guessed. Self-calibrated against each pin's own idle reading at boot instead (see
+// setup() below) - keep your hands off the pads while the board resets/powers up.
+uint32_t touchBaseline[16] = { 0 };  // idle reading per pin, set once in setup()
+// How far above its own idle baseline a pin's reading must rise to count as touched.
+// A percentage (not a fixed count) since raw magnitudes vary a lot by board/wiring, but
+// a real touch is a large relative jump either way - if this proves too sensitive or
+// not sensitive enough on your hardware, adjust this one number rather than re-guessing
+// a whole fixed threshold.
+const float touchMarginPercent = 0.15f;  // 15% above idle baseline counts as touched
 
 bool wasTouched[16] = { false };  // sized for the max S2/S3 channel count
 
 void setup() {
-  // Uncomment for raw-value calibration (see THRESHOLD note above):
+  // Uncomment to watch raw values / baselines directly (see calibration note above):
   // Serial.begin(115200);
-  // for (int i = 0; i < numZones; i++) Serial.printf("zone %d raw=%u\n", i, touchRead(touchPins[i]));
 
   neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // off - no pinMode() needed, neopixelWrite handles setup
+
+  // Self-calibrate: average several idle readings per pin right after boot. Assumes
+  // nothing is touching any pad during this window - keep hands clear while the board
+  // resets or powers up.
+  const int kCalibrationSamples = 16;
+  for (int zone = 0; zone < numZones; zone++) {
+    uint32_t sum = 0;
+    for (int i = 0; i < kCalibrationSamples; i++) {
+      sum += touchRead(touchPins[zone]);
+      delay(5);
+    }
+    touchBaseline[zone] = sum / kCalibrationSamples;
+    // Serial.printf("zone %d idle baseline=%u\n", zone, touchBaseline[zone]);
+  }
 
   USB.begin();
   Gamepad.begin();
@@ -87,8 +107,12 @@ void loop() {
   bool anyTouched = false;
 
   for (int zone = 0; zone < numZones; zone++) {
-    uint16_t raw = touchRead(touchPins[zone]);
-    bool isTouched = raw > touchThreshold;
+    uint32_t raw = touchRead(touchPins[zone]);  // touch_value_t is uint32_t on S2/S3 -
+                                                  // must match exactly, a narrower type
+                                                  // here silently truncates/wraps and can
+                                                  // invert the apparent touch direction
+    uint32_t threshold = touchBaseline[zone] + static_cast<uint32_t>(touchBaseline[zone] * touchMarginPercent);
+    bool isTouched = raw > threshold;
     if (isTouched) anyTouched = true;
 
     if (isTouched != wasTouched[zone]) {
