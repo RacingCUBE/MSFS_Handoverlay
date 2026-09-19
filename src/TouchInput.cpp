@@ -69,16 +69,14 @@ void TouchInput::update() {
 }
 
 bool TouchInput::isHeld(int zone) const {
+    if (m_simulatedHeldZones.count(zone) > 0) return true;
     if (zone < 0 || zone >= static_cast<int>(m_lastButtonState.size())) return false;
     return m_lastButtonState[zone] == GLFW_PRESS;
 }
 
 void TouchInput::injectSimulatedPress(int zone) {
     if (zone < 0) return;
-    if (static_cast<int>(m_lastButtonState.size()) <= zone) {
-        m_lastButtonState.resize(zone + 1, GLFW_RELEASE);
-    }
-    m_lastButtonState[zone] = GLFW_PRESS;
+    m_simulatedHeldZones.insert(zone);
 
     TouchEvent evt;
     evt.zone = zone;
@@ -87,8 +85,7 @@ void TouchInput::injectSimulatedPress(int zone) {
 }
 
 void TouchInput::injectSimulatedRelease(int zone) {
-    if (zone < 0 || zone >= static_cast<int>(m_lastButtonState.size())) return;
-    m_lastButtonState[zone] = GLFW_RELEASE;
+    m_simulatedHeldZones.erase(zone);
 }
 
 bool TouchInput::pollEvent(TouchEvent& outEvent) {

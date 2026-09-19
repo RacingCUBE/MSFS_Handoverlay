@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <set>
 
 // One touch event derived from a rising edge on a HID gamepad button - see the TouchInput
 // class comment for why a HID gamepad rather than a serial/COM-port link. "zone" is just
@@ -53,25 +54,31 @@ public:
     bool pollEvent(TouchEvent& outEvent);
 
     // Returns true if the given button/zone index is currently held down, as of the most
-    // recent update() call. Separate from pollEvent()'s "just pressed" edge events - used
-    // for continuous dial-rotation tracking while a touch stays held (see main.cpp), where
-    // holding a dial doesn't generate new edge events on its own.
+    // recent update() call OR a still-active simulated press (see injectSimulatedPress) -
+    // whichever says "held" wins. Separate from pollEvent()'s "just pressed" edge events -
+    // used for continuous dial-rotation tracking while a touch stays held (see main.cpp),
+    // where holding a dial doesn't generate new edge events on its own.
     bool isHeld(int zone) const;
 
     const std::string& getLastError() const { return m_lastError; }
 
     // Test-only: injects a synthetic touch event and marks the zone "held", without any
     // real HID gamepad - for exercising the matching/dial-tracking pipeline (against real
-    // camera footage) before touch hardware exists. Only meant to be used while NOT
-    // connected to a real device (isConnected() == false) - update() overwrites the whole
-    // button-state array from the real device otherwise, which would clobber a simulated
-    // zone. Call injectSimulatedRelease() with the same zone to end the simulated hold.
+    // camera footage) before touch hardware exists. Tracked entirely separately from the
+    // real device's button state (m_simulatedHeldZones, not m_lastButtonState) - a real
+    // fix for a real bug: they used to share storage, so calling connect()/disconnect() to
+    // manage a real device (e.g. to stop it from interfering with a simulated test) would
+    // silently wipe out an in-progress simulated hold too, ending a dial drag the user
+    // never actually released. Call injectSimulatedRelease() with the same zone to end the
+    // simulated hold.
     void injectSimulatedPress(int zone);
     void injectSimulatedRelease(int zone);
 
 private:
     int m_joystickID = -1;
-    std::vector<unsigned char> m_lastButtonState;
+    std::vector<unsigned char> m_lastButtonState;  // real device only, written by update()
+    std::set<int> m_simulatedHeldZones;            // simulated only, untouched by connect()/
+                                                     // disconnect()/update() - see isHeld()
     std::vector<TouchEvent> m_pendingEvents;
     std::string m_lastError;
 };
