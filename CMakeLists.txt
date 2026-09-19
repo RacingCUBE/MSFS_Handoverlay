@@ -37,6 +37,21 @@ set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/third_party/onnxruntime-win-x64-gpu-1.2
 set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_DIR}/include")
 set(ONNXRUNTIME_LIB "${ONNXRUNTIME_DIR}/lib/onnxruntime.lib")
 
+# SimConnect (MSFS SDK) - fires client events (e.g. autopilot knob inc/dec) into a
+# running MSFS instance. Not vendored in this repo (it's part of the official, several-GB
+# MSFS SDK installer, not something to check into source control) - expected at the
+# standard install path. Using the static lib deliberately: it links the SimConnect
+# client code directly into this exe, so no SimConnect.dll needs to be copied/shipped
+# alongside it (unlike the dynamic lib at SimConnect SDK/lib/SimConnect.lib).
+set(SIMCONNECT_SDK_DIR "C:/MSFS SDK/SimConnect SDK")
+set(SIMCONNECT_INCLUDE_DIR "${SIMCONNECT_SDK_DIR}/include")
+set(SIMCONNECT_LIB "${SIMCONNECT_SDK_DIR}/lib/static/SimConnect.lib")
+if(NOT EXISTS "${SIMCONNECT_LIB}")
+    message(FATAL_ERROR "SimConnect SDK not found at ${SIMCONNECT_SDK_DIR} - install the "
+        "MSFS SDK (in-sim: General Options > Developer Mode > enable, then install the SDK "
+        "from the Developer menu) or update SIMCONNECT_SDK_DIR above to match your install.")
+endif()
+
 # Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
@@ -44,6 +59,7 @@ include_directories(
     ${OpenCV_INCLUDE_DIRS}
     ${OPENVR_INCLUDE_DIR}
     ${ONNXRUNTIME_INCLUDE_DIR}
+    ${SIMCONNECT_INCLUDE_DIR}
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
 )
@@ -76,6 +92,7 @@ set(SOURCES
     src/SegmentationEngine.cpp
     src/TouchInput.cpp
     src/HandTouchTracker.cpp
+    src/SimConnectClient.cpp
     api-layer/src/SharedMemory.cpp
     ${IMGUI_SOURCES}
 )
@@ -93,6 +110,7 @@ set(HEADERS
     include/SegmentationEngine.h
     include/TouchInput.h
     include/HandTouchTracker.h
+    include/SimConnectClient.h
 )
 
 # Executable (WIN32 = no console window)
@@ -113,6 +131,9 @@ target_link_libraries(${PROJECT_NAME}
     OpenXR::openxr_loader
     ${OPENVR_LIB}
     ${ONNXRUNTIME_LIB}
+    ${SIMCONNECT_LIB}
+    ws2_32.lib     # SimConnect's static lib uses Winsock internally (TCP transport) - not pulled in automatically
+    Shlwapi.lib    # ...and PathCombineA from Shlwapi
 )
 
 # Copy all required DLLs using dedicated batch script (PERMANENT FIX)

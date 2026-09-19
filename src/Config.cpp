@@ -166,6 +166,8 @@ bool Config::load(const std::string& filename) {
                     else if (key == "XNorm") touch.buttons[idx].xNorm = std::stof(value);
                     else if (key == "YNorm") touch.buttons[idx].yNorm = std::stof(value);
                     else if (key == "Type") touch.buttons[idx].type = static_cast<TouchControlType>(std::stoi(value));
+                    else if (key == "SimConnectIncEvent") touch.buttons[idx].simConnectIncEvent = value;
+                    else if (key == "SimConnectDecEvent") touch.buttons[idx].simConnectDecEvent = value;
                 }
             }
         }
@@ -302,7 +304,9 @@ bool Config::save(const std::string& filename) {
         file << "IsLeftEye = " << (b.isLeftEye ? 1 : 0) << "\n";
         file << "XNorm = " << b.xNorm << "\n";
         file << "YNorm = " << b.yNorm << "\n";
-        file << "Type = " << static_cast<int>(b.type) << "  # 0 = Button, 1 = Dial (rotation center)\n\n";
+        file << "Type = " << static_cast<int>(b.type) << "  # 0 = Button, 1 = Dial (rotation center)\n";
+        file << "SimConnectIncEvent = " << b.simConnectIncEvent << "  # Fired on each +1 tick (Dial only); empty = log/visualize only\n";
+        file << "SimConnectDecEvent = " << b.simConnectDecEvent << "  # Fired on each -1 tick (Dial only); empty = log/visualize only\n\n";
     }
 
     file.close();

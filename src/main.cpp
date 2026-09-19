@@ -27,6 +27,7 @@
 #include "D3D11Context.h"
 #include "SegmentationEngine.h"
 #include "TouchInput.h"
+#include "SimConnectClient.h"
 #include "HandTouchTracker.h"
 
 // DirectX 11 interop
@@ -80,6 +81,12 @@ SegmentationEngine g_segmentationEngine;
 // calibrated button was actually touched - see TOUCH_CALIBRATION.md for the full design and
 // the hardware/firmware side (arduino/CapacitiveTouchZones/).
 TouchInput g_touchInput;
+
+// Fires actual MSFS control events (e.g. the altitude knob's inc/dec) on each dial tick,
+// when a calibrated Dial has SimConnect events assigned - see TouchButtonCalibration in
+// Config.h. Purely additive: a Dial with no events assigned still just logs/visualizes,
+// same as the original scope, so this doesn't change existing behavior until configured.
+SimConnectClient g_simConnect;
 TouchMatchResult g_lastTouchMatch;
 std::chrono::steady_clock::time_point g_lastTouchMatchTime;
 // When armed, the next touch event's detected fingertip position is written into
@@ -1521,6 +1528,10 @@ void mainLoop() {
         if (config.touch.enabled) {
             g_touchInput.update();
         }
+        // Pumps SimConnect's message queue (cheap no-op when not connected) - needed to
+        // notice MSFS quitting and disconnect cleanly rather than every sendEvent() call
+        // afterward silently failing into a dead handle.
+        g_simConnect.update();
 
         // C key to reload config
         bool cKeyPressed = (glfwGetKey(g_window, GLFW_KEY_C) == GLFW_PRESS);
@@ -1834,12 +1845,21 @@ void mainLoop() {
                                     session.pendingRotationRad -= kTickThresholdRad;
                                     std::cout << "[Touch] Dial '" << dialBtn.name << "' tick +1 (count "
                                               << session.tickCount << ")" << std::endl;
+                                    // Only fires an actual sim action if this dial has an
+                                    // event configured AND SimConnect is connected - a Dial
+                                    // with no event assigned stays log/visualize only.
+                                    if (g_simConnect.isConnected() && !dialBtn.simConnectIncEvent.empty()) {
+                                        g_simConnect.sendEvent(dialBtn.simConnectIncEvent);
+                                    }
                                 }
                                 while (session.pendingRotationRad < -kTickThresholdRad) {
                                     session.tickCount -= 1;
                                     session.pendingRotationRad += kTickThresholdRad;
                                     std::cout << "[Touch] Dial '" << dialBtn.name << "' tick -1 (count "
                                               << session.tickCount << ")" << std::endl;
+                                    if (g_simConnect.isConnected() && !dialBtn.simConnectDecEvent.empty()) {
+                                        g_simConnect.sendEvent(dialBtn.simConnectDecEvent);
+                                    }
                                 }
                             }
                         }
@@ -2682,6 +2702,33 @@ void mainLoop() {
 
                 ImGui::Spacing();
                 ImGui::Separator();
+                ImGui::Text("MSFS connection (for Dial controls with a SimConnect event assigned):");
+                if (g_simConnect.isConnected()) {
+                    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Connected");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Disconnect##simconnect")) {
+                        g_simConnect.disconnect();
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Not connected");
+                    if (!g_simConnect.getLastError().empty()) {
+                        ImGui::TextWrapped("Last error: %s", g_simConnect.getLastError().c_str());
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Connect##simconnect")) {
+                        if (!g_simConnect.connect()) {
+                            std::cerr << "[SimConnect] Connect failed: " << g_simConnect.getLastError() << std::endl;
+                        }
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Requires MSFS to be running and loaded into a flight. "
+                                       "A Dial with no SimConnect events assigned below still "
+                                       "just logs/visualizes regardless of this connection.");
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
                 const char* edgeNames[] = { "Bottom", "Top", "Left", "Right" };
                 ImGui::SetNextItemWidth(150);
                 ImGui::Combo("Arm entry edge", &config.touch.entryEdge, edgeNames, 4);
@@ -2886,6 +2933,39 @@ void mainLoop() {
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Delete")) {
                         deleteIndex = i;
+                    }
+
+                    // SimConnect event mapping - only meaningful for Dial controls, where
+                    // each +1/-1 tick can fire a real MSFS control event. Empty fields (the
+                    // default) keep the original log/visualize-only behavior. Buffers are
+                    // resynced from the string every frame rather than kept as static
+                    // per-row state, since this loop runs over a dynamically-sized vector -
+                    // a static buffer would be wrongly shared across rows.
+                    if (btn.type == TouchControlType::Dial) {
+                        char incBuf[64];
+                        strncpy_s(incBuf, btn.simConnectIncEvent.c_str(), sizeof(incBuf) - 1);
+                        ImGui::SetNextItemWidth(160);
+                        if (ImGui::InputText("Inc event", incBuf, sizeof(incBuf))) {
+                            btn.simConnectIncEvent = incBuf;
+                        }
+                        ImGui::SameLine();
+                        char decBuf[64];
+                        strncpy_s(decBuf, btn.simConnectDecEvent.c_str(), sizeof(decBuf) - 1);
+                        ImGui::SetNextItemWidth(160);
+                        if (ImGui::InputText("Dec event", decBuf, sizeof(decBuf))) {
+                            btn.simConnectDecEvent = decBuf;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Altitude preset")) {
+                            btn.simConnectIncEvent = "AP_ALT_VAR_INC";
+                            btn.simConnectDecEvent = "AP_ALT_VAR_DEC";
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Fills in the standard MSFS autopilot altitude "
+                                               "knob events. Works on default/basic aircraft - "
+                                               "some complex add-on aircraft implement their own "
+                                               "systems and won't respond to these.");
+                        }
                     }
                     ImGui::PopID();
                 }

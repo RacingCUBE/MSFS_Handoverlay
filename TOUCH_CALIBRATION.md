@@ -10,9 +10,44 @@ instant says *which specific virtual button* it was. Vision alone can't reliably
 "touching" from "hovering near"; the touch event supplies that missing confirmation with
 real contact timing, so the camera only has to answer "where", not "whether".
 
-**Current scope**: matching and logging/visualizing the result in the UI. It does **not**
-fire SimConnect events yet - that's the natural next step once matching accuracy is
-verified against the real panel.
+**Current scope**: matching, logging/visualizing, AND (new) firing real SimConnect events
+per dial tick, once a Dial control has one assigned. Buttons still log/visualize only -
+only dials drive SimConnect so far, since that was the first concrete need (the altitude
+knob).
+
+## Wiring a dial to an actual MSFS control (e.g. the altitude knob)
+
+Requires the MSFS SDK installed (in-sim: enable Developer Mode under General Options,
+then install the SDK from the Developer menu) - `CMakeLists.txt` expects it at
+`C:\MSFS SDK\SimConnect SDK` and fails the CMake configure step with a clear message if
+it's not found there. `SimConnectClient` (`include/SimConnectClient.h`,
+`src/SimConnectClient.cpp`) is a thin, send-only wrapper: `connect()`/`disconnect()`
+(only succeeds while MSFS is running and loaded into a flight), `update()` (call once per
+frame - pumps SimConnect's message queue so a QUIT message from MSFS closing is noticed
+and disconnects cleanly), and `sendEvent(name)` (maps a named event like
+`"AP_ALT_VAR_INC"` to a client event ID on first use, then transmits it at the user
+aircraft).
+
+Steps:
+1. Calibrate a Dial control normally (see above).
+2. Touch Calibration tab -> **MSFS connection** section -> **Connect** (MSFS must already
+   be running and loaded into a flight).
+3. In that dial's row, click **Altitude preset** to fill in `AP_ALT_VAR_INC`/
+   `AP_ALT_VAR_DEC` - the standard, long-established autopilot altitude knob events - or
+   type any other event name pair directly into the **Inc event**/**Dec event** fields.
+4. **Save to Config File** to persist the mapping (`SimConnectIncEvent`/
+   `SimConnectDecEvent` under that dial's `[TouchButtonN]` section).
+5. Turn the dial - each tick now fires the mapped event, if SimConnect is connected and
+   the fields are non-empty. Leave both fields empty to keep a dial log/visualize-only.
+
+**Known limitation, not yet worked around**: `AP_ALT_VAR_INC`/`DEC` and similarly-aged
+standard events work on MSFS's default/basic aircraft. Complex study-level add-on
+aircraft (and some of MSFS's own higher-fidelity Working Title glass cockpits) sometimes
+implement their own autopilot logic via custom systems that don't respond to these
+standard events at all - verified per-aircraft, not something this wrapper can detect.
+The community fix for that class of aircraft is generally a WASM-module-based H:Event
+bridge (e.g. MobiFlight's), which is a materially larger, different mechanism than plain
+SimConnect client events - not implemented here.
 
 **Dials, not just buttons**: several of the real controls are rotary dials, not push
 buttons - touching one only confirms *that* it was touched, not which way it got turned,

@@ -107,6 +107,12 @@ struct TouchButtonCalibration {
     float xNorm = 0.5f;
     float yNorm = 0.5f;
     TouchControlType type = TouchControlType::Button;
+    // Named SimConnect client events (SimConnectClient::sendEvent) fired on each +1/-1
+    // dial tick - e.g. "AP_ALT_VAR_INC"/"AP_ALT_VAR_DEC" for the altitude knob. Only
+    // meaningful for Dial-type controls. Empty = no SimConnect action, log/visualize only
+    // (the original scope, still the default until explicitly configured otherwise).
+    std::string simConnectIncEvent;
+    std::string simConnectDecEvent;
 };
 
 struct TouchConfig {

@@ -144,7 +144,7 @@ void loop() {
                                                   // must match exactly, a narrower type
                                                   // here silently truncates/wraps and can
                                                   // invert the apparent touch direction
-    uint32_t threshold = touchBaseline[zone] + static_cast<uint32_t>(touchBaseline[zone] * touchMarginPercent);
+    uint32_t threshold = 260000; // touchBaseline[zone] + static_cast<uint32_t>(touchBaseline[zone] * touchMarginPercent);
     bool isTouched = raw > threshold;
     if (isTouched) anyTouched = true;
 
