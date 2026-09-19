@@ -61,6 +61,18 @@ float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold =
 // instrumented data rather than assumed (see project notes on that fix).
 float angleDeltaAxis(float fromAngle, float toAngle);
 
+// Diagnostic-only: counts strong, trackable corner features (cv::goodFeaturesToTrack)
+// within the hand region of one eye's BGR camera frame, masked by its alpha matte. Not
+// used by any tracking logic - exists to answer, with real numbers from actual footage
+// rather than guessing, whether there's enough visual texture on bare skin under this
+// rig's real camera/lighting to make optical-flow-based rotation tracking viable at all.
+// A low or unstable count here means feature-tracking would likely trade one class of
+// problem (a poorly-conditioned ellipse fit on a compact grip) for another (too few or
+// unreliable tracks on low-texture skin), not a guaranteed improvement over the current
+// approach. Returns -1 if no hand contour was found.
+int countTrackableHandFeatures(const cv::Mat& bgrFrame, const cv::Mat& alphaMask,
+                                int alphaThreshold = 32, double minContourArea = 200.0);
+
 // Direction angle (radians, standard atan2 range (-pi, pi]) from the hand contour's
 // centroid toward its fingertip - a genuine 360-degree direction, unlike
 // computeHandOrientationAngle()'s 180-degree-periodic axis. Meant as a live, intuitive

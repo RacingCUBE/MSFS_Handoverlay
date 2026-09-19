@@ -116,6 +116,33 @@ float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold,
     return ellipse.angle * static_cast<float>(CV_PI) / 180.0f;
 }
 
+int countTrackableHandFeatures(const cv::Mat& bgrFrame, const cv::Mat& alphaMask,
+                                int alphaThreshold, double minContourArea) {
+    if (bgrFrame.empty() || alphaMask.empty()) return -1;
+
+    std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
+    if (contour.empty()) return -1;
+
+    cv::Mat mask8u;
+    if (alphaMask.type() != CV_8UC1) {
+        alphaMask.convertTo(mask8u, CV_8UC1);
+    } else {
+        mask8u = alphaMask;
+    }
+    cv::Mat handMask;
+    cv::threshold(mask8u, handMask, alphaThreshold, 255, cv::THRESH_BINARY);
+
+    cv::Mat gray;
+    cv::cvtColor(bgrFrame, gray, cv::COLOR_BGR2GRAY);
+
+    std::vector<cv::Point2f> corners;
+    // Parameters are deliberately the common, unremarkable defaults for this kind of
+    // check (not tuned to make the count look better or worse either way) - up to 100
+    // corners, minimum quality 1% of the strongest response, at least 7px apart.
+    cv::goodFeaturesToTrack(gray, corners, 100, 0.01, 7, handMask);
+    return static_cast<int>(corners.size());
+}
+
 float angleDeltaAxis(float fromAngle, float toAngle) {
     // Double both angles so the 180-degree-periodic axis becomes a normal 360-degree-
     // periodic direction, difference them with ordinary wraparound-safe subtraction, then

@@ -158,6 +158,9 @@ struct LiveHandDiagnostics {
     float orientationRightConfidence = 0.0f;
     float directionLeftDeg = std::numeric_limits<float>::quiet_NaN();     // +-180, see computeHandDirectionAngle
     float directionRightDeg = std::numeric_limits<float>::quiet_NaN();
+    // Diagnostic-only: see countTrackableHandFeatures(). -1 = no hand detected that frame.
+    int trackableFeaturesLeft = -1;
+    int trackableFeaturesRight = -1;
 };
 LiveHandDiagnostics g_liveHandDiag;
 
@@ -1692,6 +1695,14 @@ void mainLoop() {
                         : dirLeft * 180.0f / static_cast<float>(CV_PI);
                     g_liveHandDiag.directionRightDeg = std::isnan(dirRight) ? dirRight
                         : dirRight * 180.0f / static_cast<float>(CV_PI);
+
+                    // Diagnostic-only: real data on whether there's enough trackable
+                    // texture on bare skin (under this rig's actual camera/lighting) to
+                    // make an optical-flow-based rotation approach worth building at all -
+                    // see countTrackableHandFeatures()'s own comment. Not used by any
+                    // tracking logic, purely informational.
+                    g_liveHandDiag.trackableFeaturesLeft = countTrackableHandFeatures(leftFrame, leftAlpha);
+                    g_liveHandDiag.trackableFeaturesRight = countTrackableHandFeatures(rightFrame, rightAlpha);
                 }
 
                 // Capacitive touch: check for a pending event and, if segmentation produced a
@@ -2805,6 +2816,13 @@ void mainLoop() {
                         } else {
                             ImGui::TextDisabled("| twist: n/a");
                         }
+                        ImGui::SameLine();
+                        int featureCount = isLeft ? g_liveHandDiag.trackableFeaturesLeft : g_liveHandDiag.trackableFeaturesRight;
+                        if (featureCount >= 0) {
+                            ImGui::Text("| features %d", featureCount);
+                        } else {
+                            ImGui::TextDisabled("| features: n/a");
+                        }
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip(
@@ -2812,7 +2830,12 @@ void mainLoop() {
                             "axis: hand silhouette's orientation - undirected, so 10 and 190 "
                             "degrees look identical (this is what drives dial tracking).\n"
                             "twist: centroid->fingertip direction - a true +-180 reading with "
-                            "no ambiguity, easier to watch sweep as you turn your wrist.");
+                            "no ambiguity, easier to watch sweep as you turn your wrist.\n"
+                            "features: strong trackable corners found on bare skin this frame "
+                            "(diagnostic only, not used by any tracking) - a real, low number "
+                            "here across different grips/lighting is evidence that an optical-"
+                            "flow rotation approach wouldn't have enough texture to track "
+                            "reliably; a healthy, stable number is a green light to consider it.");
                     }
                 }
 

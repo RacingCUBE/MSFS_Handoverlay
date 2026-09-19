@@ -248,6 +248,28 @@ diagnostics as `conf` next to the axis reading - watch this while changing grip:
 stays low with a particular grip and higher with a flatter one, that confirms grip shape
 is the actual limiting factor, not transient noise.
 
+## Is feature-tracking worth building?
+
+A materially different approach exists for rotation tracking: track distinct visual
+points on the hand (knuckles, creases) frame-to-frame with optical flow, then estimate
+rotation directly from how those points moved - unlike the ellipse fit, this doesn't
+depend on the overall silhouette being elongated, so it could in principle handle a
+compact/pinch grip that the current approach struggles with. But it's not a guaranteed
+improvement: it needs enough distinct trackable texture to find and follow, and bare skin
+under a webcam is often low on that compared to a printed marker or textured surface, and
+it could suffer more than a silhouette fit does from motion blur during a fast twist. It
+would also be meaningfully more code (feature detection, tracking, outlier rejection,
+handling lost/regained points) - a real, different subsystem, not a tuning tweak.
+
+Before committing to that investment, `countTrackableHandFeatures()` gives a cheap,
+real-data answer: it runs `cv::goodFeaturesToTrack` on the actual hand region each frame
+(diagnostic only - not used by any tracking logic) and reports the count live in the tab
+as **features N**. A consistently low/unstable count across different grips and lighting
+is evidence feature-tracking would trade one class of problem (poorly-conditioned
+ellipse) for another (too few/unreliable tracks) rather than fixing it; a healthy, stable
+count is a green light to consider actually building the rotation-estimation pipeline on
+top of it.
+
 **Known real limitation, not fixed by smoothing**: initial testing found the axis angle's
 *sensitivity* can be poor, not just noisy - a 90-degree real wrist rotation moved the
 reading only ~10 degrees in one test. This is consistent with an ellipse fit's angle
