@@ -57,7 +57,10 @@
 
 USBHIDGamepad Gamepad;
 
-const uint8_t touchPins[] = { 1, 2, 3, 4, 5, 6, 7, 8 };  // Edit to your actual wiring/zone count
+// ESP32-S2's touch peripheral only covers GPIO1-GPIO14 (T1-T14) - GPIO16 and most other
+// pins aren't wired to it at all, regardless of firmware. Single zone on GPIO1 (T1) here;
+// add more entries (any GPIO1-14) if more zones are needed later.
+const uint8_t touchPins[] = { 1 };
 const int numZones = sizeof(touchPins) / sizeof(touchPins[0]);
 
 // Raw touchRead() values vary a lot by board, trace length, and how large/conductive each
