@@ -79,20 +79,13 @@ const float touchMarginPercent = 0.15f;  // 15% above idle baseline counts as to
 
 bool wasTouched[16] = { false };  // sized for the max S2/S3 channel count
 
-void setup() {
-  // Requires Tools > USB CDC On Boot: Enabled - otherwise Serial has nowhere to go on a
-  // board with no separate USB-UART chip (native USB only). With it enabled, a normal
-  // COM port shows up alongside the HID gamepad on the same cable - open Serial Monitor
-  // at 115200 baud and select that port.
-  Serial.begin(115200);
-  delay(1500);  // give the USB CDC connection a moment to enumerate before printing
-  Serial.println("CapacitiveTouchZones_ESP32 starting - keep hands off the pad...");
-
-  neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // off - no pinMode() needed, neopixelWrite handles setup
-
-  // Self-calibrate: average several idle readings per pin right after boot. Assumes
-  // nothing is touching any pad during this window - keep hands clear while the board
-  // resets or powers up.
+// Averages several idle readings per pin and sets touchBaseline[] from them. Called once
+// at boot, and again on demand (type 'c' + Enter in Serial Monitor) - a physical
+// power-cycle isn't the only way to recalibrate if the board happened to reset with a
+// hand too close to the pad, which inflates the "idle" baseline and can make a real
+// touch afterward look like it never crosses the threshold at all.
+void calibrate() {
+  Serial.println("Calibrating - keep hands off the pad...");
   const int kCalibrationSamples = 16;
   for (int zone = 0; zone < numZones; zone++) {
     uint32_t sum = 0;
@@ -105,6 +98,21 @@ void setup() {
                   zone, touchPins[zone], touchBaseline[zone],
                   touchBaseline[zone] + static_cast<uint32_t>(touchBaseline[zone] * touchMarginPercent));
   }
+}
+
+void setup() {
+  // Requires Tools > USB CDC On Boot: Enabled - otherwise Serial has nowhere to go on a
+  // board with no separate USB-UART chip (native USB only). With it enabled, a normal
+  // COM port shows up alongside the HID gamepad on the same cable - open Serial Monitor
+  // at 115200 baud and select that port.
+  Serial.begin(115200);
+  delay(1500);  // give the USB CDC connection a moment to enumerate before printing
+  Serial.println("CapacitiveTouchZones_ESP32 starting. Type 'c' + Enter any time to");
+  Serial.println("recalibrate (e.g. if the board reset with a hand too close to the pad).");
+
+  neopixelWrite(RGB_BUILTIN, 0, 0, 0);  // off - no pinMode() needed, neopixelWrite handles setup
+
+  calibrate();
 
   USB.begin();
   Gamepad.begin();
@@ -118,6 +126,16 @@ unsigned long lastPrintMs = 0;
 const unsigned long kPrintIntervalMs = 200;
 
 void loop() {
+  // Recalibrate on demand: type 'c' + Enter in Serial Monitor. Reads/discards whatever
+  // else is in the buffer that line so a stray newline-only send doesn't do anything.
+  if (Serial.available()) {
+    char c = Serial.read();
+    while (Serial.available()) { Serial.read(); }
+    if (c == 'c' || c == 'C') {
+      calibrate();
+    }
+  }
+
   bool anyTouched = false;
   bool shouldPrint = (millis() - lastPrintMs) >= kPrintIntervalMs;
 
