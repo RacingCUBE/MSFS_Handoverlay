@@ -118,6 +118,38 @@ wrap-aware exponential smoothing) is available right above the readouts, and fee
 this diagnostic and real dial-rotation tracking. 1.0 = no smoothing; lower values smooth
 more at the cost of added lag. Tune by watching the live "axis" number while turning.
 
+## Multi-turn dials: sessions survive a release/regrab
+
+Real testing found that a dial needing several turns to reach a target - release, spin
+the wrist back to regrip, grab again, continue - was silently losing rotation. Two
+compounding causes, both fixed:
+
+1. **Ticks used to require one frame's motion to cross the threshold on its own.** A
+   brief regrab spread over just 2-3 frames could have each frame's motion individually
+   too small to register, even though the total across those frames was real. Fixed with
+   an accumulator (`DialSession::pendingRotationRad`): every frame's delta adds to a
+   running total regardless of size, and a tick fires (with a `while`, not `if`, in case
+   a single fast frame covers several detents) once the *cumulative* total crosses a full
+   detent's worth, carrying the remainder forward.
+2. **Tick count used to reset to zero on every fresh grab.** Releasing to reposition the
+   wrist was indistinguishable from actually finishing the turn. Fixed with
+   `DialSession`, keyed per calibrated dial, that persists tick count and pending
+   rotation across a release - as long as the *same* dial gets touched again within
+   `kDialSessionTimeoutSeconds` (3s). Touching a different dial, or coming back to the
+   same one after the timeout, starts a genuinely fresh turn instead of continuing a
+   stale one.
+
+The angle-tracking baseline itself (`lastOrientationRad`, the smoothing filter) still
+resets on every fresh grab, deliberately - the hand's orientation during the "let go and
+reposition" phase is arbitrary and unrelated to the dial's real rotation, so carrying
+that raw angle across a release would misread the repositioning motion as more turning.
+Only the tick/rotation bookkeeping persists, not the angle baseline.
+
+The Touch Calibration tab's "Active dial" section now also stays visible (greyed out,
+labeled "released - grab again to continue") for the same timeout window after you let
+go, instead of vanishing immediately - so the tick count doesn't look lost when the
+session is actually still alive and waiting for you to continue.
+
 ## Dial rotation as tick counts, not degrees
 
 Rather than reporting a precise rotation amount, dial tracking now counts simple +1/-1

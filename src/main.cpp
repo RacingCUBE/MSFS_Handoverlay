@@ -90,26 +90,43 @@ bool g_touchCalibrationArmed = false;
 int g_touchCalibrationTargetIndex = -1;
 bool g_touchCalibrationTargetEye = true;  // true = left eye
 
+// A real multi-turn dial often needs several grab-twist-release cycles to reach a target
+// (release, spin the wrist back the other way to regrip, grab again, continue turning the
+// same direction) - real testing found that resetting tick progress on every fresh grab
+// silently drops rotation: a quick regrab-and-continue cycle can easily be too brief, or
+// too close to the axis signal's real-world sensitivity floor (see TOUCH_CALIBRATION.md),
+// to cross a full tick's worth of motion within that one grab alone. DialSession persists
+// the leftover fractional rotation and tick count across a release, for as long as the
+// same dial gets touched again within kDialSessionTimeoutSeconds - long enough to cover
+// the brief "let go, reposition wrist, regrab" gap, short enough that touching the same
+// dial again much later (an unrelated interaction) starts a genuinely fresh turn.
+struct DialSession {
+    float pendingRotationRad = 0.0f;  // accumulated rotation not yet converted to a tick -
+                                        // see the accumulator comment where it's consumed
+    int tickCount = 0;
+    float totalRotationRad = 0.0f;    // diagnostic only, since this session started
+    std::chrono::steady_clock::time_point lastActivity;
+    bool everTouched = false;
+};
+std::vector<DialSession> g_dialSessions;  // indexed by config.touch.buttons index
+constexpr float kDialSessionTimeoutSeconds = 3.0f;
+// Shown in the UI for a moment after release so the tick count doesn't just vanish -
+// separate from g_activeDialDrag.active, which goes false immediately on release.
+int g_lastDialSessionButtonIndex = -1;
+
 // Tracks an in-progress dial rotation: set when a touch's matched calibration entry is a
 // Dial and the touch is still held, cleared when that zone releases. Rotation is measured
 // by the hand contour's own twist (computeHandOrientationAngle), not by the fingertip's
 // position - see HandTouchTracker.h for why a twisting wrist is the more reliable signal
-// than tracking a fingertip sweeping around a pivot.
+// than tracking a fingertip sweeping around a pivot. Per-grab state only (resets every
+// fresh touch) - persistent tick/rotation state lives in DialSession above instead.
 struct ActiveDialDrag {
     bool active = false;
-    int buttonIndex = -1;
+    int buttonIndex = -1;   // also indexes into g_dialSessions
     int zone = -1;
     bool isLeftEye = true;
     float lastOrientationRad = 0.0f;
-    float totalRotationRad = 0.0f;  // accumulated since this drag started - diagnostic only
-    // Simple detent-style counter: +1/-1 per frame the filtered angle moves past the noise
-    // threshold in that direction, rather than trying to report a precise degree amount -
-    // far more forgiving of a noisy or low-sensitivity signal (see TOUCH_CALIBRATION.md's
-    // notes on the axis angle's real-world sensitivity limits) since it only needs the
-    // *sign* of the change to be reliable, not its magnitude. This is also naturally close
-    // to how SimConnect knob controls actually work (discrete increment/decrement events).
-    int tickCount = 0;
-    AxisAngleFilter filter;         // smooths the raw per-frame orientation angle
+    AxisAngleFilter filter;  // smooths the raw per-frame orientation angle
 };
 ActiveDialDrag g_activeDialDrag;
 
@@ -1723,16 +1740,36 @@ void mainLoop() {
                                     const cv::Mat& dragMask = result.isLeftEye ? leftAlpha : rightAlpha;
                                     float startAngle = computeHandOrientationAngle(dragMask);
                                     if (!std::isnan(startAngle)) {
-                                        g_activeDialDrag = ActiveDialDrag();  // fresh filter state too
+                                        g_activeDialDrag = ActiveDialDrag();  // fresh filter/angle state each grab
                                         g_activeDialDrag.active = true;
                                         g_activeDialDrag.buttonIndex = result.buttonIndex;
                                         g_activeDialDrag.zone = touchEvt.zone;
                                         g_activeDialDrag.isLeftEye = result.isLeftEye;
                                         g_activeDialDrag.lastOrientationRad =
                                             g_activeDialDrag.filter.update(startAngle, config.touch.axisFilterAlpha);
-                                        g_activeDialDrag.totalRotationRad = 0.0f;
-                                        std::cout << "[Touch] Dial '" << matchedBtn.name
-                                                  << "' - tracking rotation while held" << std::endl;
+
+                                        if (static_cast<int>(g_dialSessions.size()) <= result.buttonIndex) {
+                                            g_dialSessions.resize(result.buttonIndex + 1);
+                                        }
+                                        DialSession& session = g_dialSessions[result.buttonIndex];
+                                        float sinceLast = session.everTouched
+                                            ? std::chrono::duration<float>(
+                                                  std::chrono::steady_clock::now() - session.lastActivity).count()
+                                            : kDialSessionTimeoutSeconds + 1.0f;
+                                        if (sinceLast > kDialSessionTimeoutSeconds) {
+                                            // Either the first touch ever, or it's been long enough
+                                            // that this is a genuinely new turn, not a continuation.
+                                            session = DialSession();
+                                            std::cout << "[Touch] Dial '" << matchedBtn.name
+                                                      << "' - starting new turn" << std::endl;
+                                        } else {
+                                            std::cout << "[Touch] Dial '" << matchedBtn.name
+                                                      << "' - continuing turn (tick count so far "
+                                                      << session.tickCount << ")" << std::endl;
+                                        }
+                                        session.everTouched = true;
+                                        session.lastActivity = std::chrono::steady_clock::now();
+                                        g_lastDialSessionButtonIndex = result.buttonIndex;
                                     }
                                 }
                             } else {
@@ -1748,12 +1785,19 @@ void mainLoop() {
                     // held and twisted doesn't generate new HID events - the button just
                     // stays pressed - so this has to sample the mask on its own each frame).
                     if (g_activeDialDrag.active) {
+                        DialSession& session = g_dialSessions[g_activeDialDrag.buttonIndex];
                         if (!g_touchInput.isHeld(g_activeDialDrag.zone)) {
+                            // Restart the session-continuation clock from the moment of release,
+                            // not from whenever it was last updated mid-drag - the timeout is
+                            // meant to measure "how long since you let go", i.e. how much time
+                            // you get to reposition your wrist and grab again.
+                            session.lastActivity = std::chrono::steady_clock::now();
                             const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
-                            std::cout << "[Touch] Dial '" << dialBtn.name << "' released - final tick count "
-                                      << g_activeDialDrag.tickCount << " (total "
-                                      << (g_activeDialDrag.totalRotationRad * 180.0f / static_cast<float>(CV_PI))
-                                      << " deg)" << std::endl;
+                            std::cout << "[Touch] Dial '" << dialBtn.name << "' released - tick count "
+                                      << session.tickCount << " so far (total "
+                                      << (session.totalRotationRad * 180.0f / static_cast<float>(CV_PI))
+                                      << " deg) - grab again within " << kDialSessionTimeoutSeconds
+                                      << "s to continue this turn" << std::endl;
                             g_activeDialDrag = ActiveDialDrag();
                         } else {
                             const cv::Mat& dragMask = g_activeDialDrag.isLeftEye ? leftAlpha : rightAlpha;
@@ -1762,25 +1806,32 @@ void mainLoop() {
                                 float angle = g_activeDialDrag.filter.update(rawAngle, config.touch.axisFilterAlpha);
                                 float delta = angleDeltaAxis(g_activeDialDrag.lastOrientationRad, angle);
                                 g_activeDialDrag.lastOrientationRad = angle;
-                                g_activeDialDrag.totalRotationRad += delta;
+                                session.totalRotationRad += delta;
+                                session.pendingRotationRad += delta;
+                                session.lastActivity = std::chrono::steady_clock::now();
 
-                                // Small dead-zone so mask noise between frames (when the hand
-                                // is essentially still) doesn't spam ticks. A plain sign check
-                                // against this threshold - not the magnitude of delta - is
-                                // deliberately all this counts on: "did it move, and which way"
-                                // is a much more reliable question to ask of this signal than
-                                // "by how much", given the sensitivity limits found in testing.
-                                constexpr float kNoiseThresholdRad = 0.02f;  // ~1.1 degrees
-                                if (delta > kNoiseThresholdRad) {
-                                    g_activeDialDrag.tickCount += 1;
-                                    const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                                // Accumulator-based tick quantization: a tick fires once the
+                                // *cumulative* pending rotation crosses a full detent's worth,
+                                // carrying any remainder forward - not "does any single frame's
+                                // delta cross the threshold". This matters a lot for a brief,
+                                // quick regrab (spread over only 2-3 frames): each individual
+                                // frame's motion can easily be too small to cross the threshold
+                                // alone, even though the total across those frames is real and
+                                // should count. A while-loop (not if) handles a very fast twist
+                                // that covers several detents' worth of rotation in one frame.
+                                constexpr float kTickThresholdRad = 0.02f;  // ~1.1 degrees per tick
+                                const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                                while (session.pendingRotationRad > kTickThresholdRad) {
+                                    session.tickCount += 1;
+                                    session.pendingRotationRad -= kTickThresholdRad;
                                     std::cout << "[Touch] Dial '" << dialBtn.name << "' tick +1 (count "
-                                              << g_activeDialDrag.tickCount << ")" << std::endl;
-                                } else if (delta < -kNoiseThresholdRad) {
-                                    g_activeDialDrag.tickCount -= 1;
-                                    const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                                              << session.tickCount << ")" << std::endl;
+                                }
+                                while (session.pendingRotationRad < -kTickThresholdRad) {
+                                    session.tickCount -= 1;
+                                    session.pendingRotationRad += kTickThresholdRad;
                                     std::cout << "[Touch] Dial '" << dialBtn.name << "' tick -1 (count "
-                                              << g_activeDialDrag.tickCount << ")" << std::endl;
+                                              << session.tickCount << ")" << std::endl;
                                 }
                             }
                         }
@@ -2708,13 +2759,38 @@ void mainLoop() {
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Text("Active dial:");
+                // Shown either while a grab is actively held, or for a short grace window
+                // after release (the same kDialSessionTimeoutSeconds window that lets you
+                // regrab and continue the same turn) - so the tick count doesn't just vanish
+                // the instant you let go, which would make it look like progress was lost
+                // even when the session is still alive and waiting for you to continue.
+                int displayIndex = -1;
+                bool displayIsLive = false;
                 if (g_activeDialDrag.active) {
-                    const auto& dialBtn = config.touch.buttons[g_activeDialDrag.buttonIndex];
+                    displayIndex = g_activeDialDrag.buttonIndex;
+                    displayIsLive = true;
+                } else if (g_lastDialSessionButtonIndex >= 0 &&
+                           g_lastDialSessionButtonIndex < static_cast<int>(g_dialSessions.size())) {
+                    const DialSession& s = g_dialSessions[g_lastDialSessionButtonIndex];
+                    float sinceRelease = std::chrono::duration<float>(
+                        std::chrono::steady_clock::now() - s.lastActivity).count();
+                    if (s.everTouched && sinceRelease < kDialSessionTimeoutSeconds) {
+                        displayIndex = g_lastDialSessionButtonIndex;
+                    }
+                }
+
+                if (displayIndex >= 0) {
+                    const DialSession& session = g_dialSessions[displayIndex];
+                    const auto& dialBtn = config.touch.buttons[displayIndex];
                     ImGui::SameLine();
-                    ImGui::Text("%s", dialBtn.name.c_str());
+                    if (displayIsLive) {
+                        ImGui::Text("%s", dialBtn.name.c_str());
+                    } else {
+                        ImGui::TextDisabled("%s (released - grab again to continue)", dialBtn.name.c_str());
+                    }
 
                     ImGui::SetWindowFontScale(1.8f);
-                    ImGui::Text("%+d", g_activeDialDrag.tickCount);
+                    ImGui::Text("%+d", session.tickCount);
                     ImGui::SetWindowFontScale(1.0f);
 
                     // A bidirectional bar centered on zero (ImGui::ProgressBar is 0-1 only
@@ -2726,7 +2802,7 @@ void mainLoop() {
                     // separate, bigger change to the injected VR overlay layer) is still
                     // open - see TOUCH_CALIBRATION.md.
                     constexpr int kBarRangeTicks = 20;  // ticks shown as full deflection each way
-                    float frac = std::clamp(static_cast<float>(g_activeDialDrag.tickCount)
+                    float frac = std::clamp(static_cast<float>(session.tickCount)
                                              / static_cast<float>(kBarRangeTicks), -1.0f, 1.0f);
 
                     ImVec2 barSize(300.0f, 24.0f);
