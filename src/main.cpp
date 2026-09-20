@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cmath>
 #include <limits>
+#include <utility>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <opencv2/opencv.hpp>
@@ -136,6 +137,30 @@ struct ActiveDialDrag {
     AxisAngleFilter filter;  // smooths the raw per-frame orientation angle
 };
 ActiveDialDrag g_activeDialDrag;
+
+// Auto-calibrates the AI Segmentation CLAHE clip limit (local contrast enhancement feeding
+// the segmentation model) against whatever hand pose the user is actually holding right
+// now - built after real testing found a knob-gripping hand tracks far worse than a flat
+// open hand, and that CLAHE (currently a very low 0.5 vs. this project's original default
+// of 7.0) is a plausible contributor: a grip's self-shadowing between curled fingers needs
+// more local contrast recovery than a flat, evenly-lit hand does. Sweeps a fixed set of
+// candidate values, scoring each with the same diagnostics already built for exactly this
+// (trackable feature count + ellipse elongation confidence) rather than guessing, and
+// keeps whichever scored best - the same "measure, don't guess" approach as the rest of
+// this feature's tuning knobs.
+enum class AutoCalState { Idle, Countdown, Sweeping, Done };
+AutoCalState g_autoCalState = AutoCalState::Idle;
+std::chrono::steady_clock::time_point g_autoCalStateStart;
+constexpr float kAutoCalCountdownSeconds = 3.0f;
+const float kClaheCandidates[] = { 0.5f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f, 10.0f };
+constexpr int kNumClaheCandidates = sizeof(kClaheCandidates) / sizeof(kClaheCandidates[0]);
+constexpr int kAutoCalSettleFrames = 2;   // let a fresh computeAlpha reflect the new value first
+constexpr int kAutoCalSampleFrames = 6;   // then average the score over this many frames
+int g_autoCalCandidateIndex = 0;
+int g_autoCalFrameInCandidate = 0;
+float g_autoCalScoreSum = 0.0f;
+int g_autoCalScoreSamples = 0;
+std::vector<std::pair<float, float>> g_autoCalResults;  // (claheValue, avgScore) per candidate
 
 // Separate filter instances for the live diagnostics readout (Touch Calibration tab) -
 // independent of any drag in progress, so the "axis" number can be watched smoothed even
@@ -1703,6 +1728,78 @@ void mainLoop() {
                     // tracking logic, purely informational.
                     g_liveHandDiag.trackableFeaturesLeft = countTrackableHandFeatures(leftFrame, leftAlpha);
                     g_liveHandDiag.trackableFeaturesRight = countTrackableHandFeatures(rightFrame, rightAlpha);
+
+                    // Auto-calibration state machine - see the globals' comment for why.
+                    // Reuses the same confLeft/confRight and feature counts just computed
+                    // above rather than recomputing anything, since they already reflect
+                    // whatever CLAHE value is currently active.
+                    if (g_autoCalState == AutoCalState::Countdown) {
+                        float elapsed = std::chrono::duration<float>(
+                            std::chrono::steady_clock::now() - g_autoCalStateStart).count();
+                        if (elapsed >= kAutoCalCountdownSeconds) {
+                            g_autoCalState = AutoCalState::Sweeping;
+                            g_autoCalCandidateIndex = 0;
+                            g_autoCalFrameInCandidate = 0;
+                            g_autoCalScoreSum = 0.0f;
+                            g_autoCalScoreSamples = 0;
+                            g_autoCalResults.clear();
+                            config.segmentation.claheClipLimit = kClaheCandidates[0];
+                            g_segmentationEngine.setClaheClipLimit(kClaheCandidates[0]);
+                            std::cout << "[AutoCal] Starting CLAHE sweep (" << kNumClaheCandidates
+                                      << " candidates)" << std::endl;
+                        }
+                    } else if (g_autoCalState == AutoCalState::Sweeping) {
+                        g_autoCalFrameInCandidate++;
+                        if (g_autoCalFrameInCandidate > kAutoCalSettleFrames) {
+                            // Combine feature count and elongation confidence into one score -
+                            // confidence scaled up to a comparable range to feature count (which
+                            // typically runs a few tens) so neither term is drowned out by the
+                            // other. Only a hand actually being detected on at least one eye
+                            // counts toward the average, so a momentary lost-track frame doesn't
+                            // unfairly penalize an otherwise-good candidate value.
+                            if (g_liveHandDiag.trackableFeaturesLeft >= 0) {
+                                g_autoCalScoreSum += static_cast<float>(g_liveHandDiag.trackableFeaturesLeft)
+                                                      + confLeft * 50.0f;
+                                g_autoCalScoreSamples++;
+                            }
+                            if (g_liveHandDiag.trackableFeaturesRight >= 0) {
+                                g_autoCalScoreSum += static_cast<float>(g_liveHandDiag.trackableFeaturesRight)
+                                                      + confRight * 50.0f;
+                                g_autoCalScoreSamples++;
+                            }
+                        }
+                        if (g_autoCalFrameInCandidate >= kAutoCalSettleFrames + kAutoCalSampleFrames) {
+                            float avgScore = (g_autoCalScoreSamples > 0)
+                                ? (g_autoCalScoreSum / g_autoCalScoreSamples) : 0.0f;
+                            float thisClahe = kClaheCandidates[g_autoCalCandidateIndex];
+                            g_autoCalResults.push_back({ thisClahe, avgScore });
+                            std::cout << "[AutoCal] CLAHE=" << thisClahe << " -> score " << avgScore
+                                      << " (" << g_autoCalScoreSamples << " samples)" << std::endl;
+
+                            g_autoCalCandidateIndex++;
+                            if (g_autoCalCandidateIndex >= kNumClaheCandidates) {
+                                float bestScore = -1.0f;
+                                float bestClahe = config.segmentation.claheClipLimit;
+                                for (const auto& r : g_autoCalResults) {
+                                    if (r.second > bestScore) {
+                                        bestScore = r.second;
+                                        bestClahe = r.first;
+                                    }
+                                }
+                                config.segmentation.claheClipLimit = bestClahe;
+                                g_segmentationEngine.setClaheClipLimit(bestClahe);
+                                std::cout << "[AutoCal] Done - best CLAHE = " << bestClahe
+                                          << " (score " << bestScore << ")" << std::endl;
+                                g_autoCalState = AutoCalState::Done;
+                            } else {
+                                g_autoCalFrameInCandidate = 0;
+                                g_autoCalScoreSum = 0.0f;
+                                g_autoCalScoreSamples = 0;
+                                config.segmentation.claheClipLimit = kClaheCandidates[g_autoCalCandidateIndex];
+                                g_segmentationEngine.setClaheClipLimit(kClaheCandidates[g_autoCalCandidateIndex]);
+                            }
+                        }
+                    }
                 }
 
                 // Capacitive touch: check for a pending event and, if segmentation produced a
@@ -2837,6 +2934,38 @@ void mainLoop() {
                             "flow rotation approach wouldn't have enough texture to track "
                             "reliably; a healthy, stable number is a green light to consider it.");
                     }
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Auto-calibrate segmentation contrast for your actual grip:");
+                ImGui::TextWrapped(
+                    "Sweeps the CLAHE clip limit (AI Segmentation Tuning, Chroma Key tab) "
+                    "across a range of values, scoring each one with the features/conf "
+                    "readouts above, and keeps whichever scored best. Grip the knob the way "
+                    "you actually would, hold steady, and don't let go until it says Done - "
+                    "takes a few seconds once started. The live hand overlay's cutout quality "
+                    "will visibly change during the sweep - that's expected.");
+                if (g_autoCalState == AutoCalState::Idle || g_autoCalState == AutoCalState::Done) {
+                    if (ImGui::Button("Auto-Calibrate CLAHE")) {
+                        g_autoCalState = AutoCalState::Countdown;
+                        g_autoCalStateStart = std::chrono::steady_clock::now();
+                    }
+                    if (g_autoCalState == AutoCalState::Done) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Done - CLAHE set to %.2f",
+                                            config.segmentation.claheClipLimit);
+                    }
+                } else if (g_autoCalState == AutoCalState::Countdown) {
+                    float remaining = kAutoCalCountdownSeconds - std::chrono::duration<float>(
+                        std::chrono::steady_clock::now() - g_autoCalStateStart).count();
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+                        "Grip the knob now - starting in %.1fs...", remaining);
+                } else if (g_autoCalState == AutoCalState::Sweeping) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+                        "Sweeping - testing CLAHE %.1f (%d/%d) - hold your grip steady...",
+                        kClaheCandidates[g_autoCalCandidateIndex], g_autoCalCandidateIndex + 1,
+                        kNumClaheCandidates);
                 }
 
                 ImGui::Spacing();

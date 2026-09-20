@@ -248,6 +248,34 @@ diagnostics as `conf` next to the axis reading - watch this while changing grip:
 stays low with a particular grip and higher with a flatter one, that confirms grip shape
 is the actual limiting factor, not transient noise.
 
+## Auto-calibrating CLAHE for your actual grip
+
+Real testing found a grip pose tracks far worse than a flat open hand, and that CLAHE
+(local contrast enhancement feeding the segmentation model) was left at an unusually low
+value (0.5, vs. this project's original default of 7.0) - a grip's self-shadowing between
+curled fingers plausibly needs more local contrast recovery than a flat, evenly-lit hand.
+
+Rather than hand-tune CLAHE by eye, the Touch Calibration tab's **Auto-Calibrate CLAHE**
+button sweeps a fixed set of candidate values (0.5 through 10), scoring each one with the
+same **features**/**conf** diagnostics already built, and keeps whichever scored best:
+
+1. Grip the knob the way you actually would in use.
+2. Click **Auto-Calibrate CLAHE** - a 3-second countdown gives you time to get into
+   position and hold it.
+3. It then sweeps all candidates automatically (a few seconds total), settling a couple
+   frames after each change before sampling, so a stale mask from the previous value
+   doesn't pollute the new one's score.
+4. The result (and every candidate's score, for review) is logged to
+   `C:\Temp\MSFSHandOverlay_App.log`; the winning value is applied immediately and shown
+   in the tab.
+
+Score per frame = trackable feature count + (elongation confidence x 50), averaged across
+both eyes and across the sampled frames for that candidate - a fairly ad hoc combination
+of two differently-scaled signals, not a principled formula, but a reasonable starting
+point given both signals matter and there was no existing measurement to calibrate the
+weighting against. Only scoped to CLAHE for now; raw camera contrast/brightness are a
+separate, not-yet-automated tunable (Camera Settings tab) that plausibly also matters.
+
 ## Is feature-tracking worth building?
 
 A materially different approach exists for rotation tracking: track distinct visual
