@@ -276,6 +276,23 @@ point given both signals matter and there was no existing measurement to calibra
 weighting against. Only scoped to CLAHE for now; raw camera contrast/brightness are a
 separate, not-yet-automated tunable (Camera Settings tab) that plausibly also matters.
 
+## Wrist-band tracking: fitting only the forearm, not the whole hand
+
+Real testing found a "distinct shape" near where the arm enters frame that stays
+consistent regardless of grip - the wrist/forearm segment - even when the fingers further
+into frame collapse into a compact blob while gripping a knob. `computeWristOrientationAngle()`
+restricts the ellipse fit to just that band (the nearest `wristBandFraction` of the hand's
+bounding-box extent to the entry edge, default 0.35) instead of the whole hand contour.
+
+Enable via **Use wrist-band tracking for dial rotation** (Touch Calibration tab) - off by
+default so existing behavior doesn't silently change. The live diagnostics show **wrist
+axis** and its own confidence right next to the whole-hand **axis** reading for direct,
+side-by-side comparison before committing to the switch: watch both during an actual
+grip and check whether wrist-band confidence stays meaningfully higher than whole-hand
+confidence. **Wrist band fraction** is a separate tunable, live once the checkbox is on -
+too small risks too few points to fit an ellipse to on some frames, too large starts
+re-including the same compact finger/knuckle region this exists to avoid.
+
 ## Is feature-tracking worth building?
 
 A materially different approach exists for rotation tracking: track distinct visual

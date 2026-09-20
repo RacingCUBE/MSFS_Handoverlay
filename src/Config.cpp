@@ -149,6 +149,8 @@ bool Config::load(const std::string& filename) {
                 else if (key == "MatchMaxDistNorm") touch.matchMaxDistNorm = std::stof(value);
                 else if (key == "AxisFilterAlpha") touch.axisFilterAlpha = std::stof(value);
                 else if (key == "DialTickThresholdDeg") touch.dialTickThresholdDeg = std::stof(value);
+                else if (key == "UseWristBandTracking") touch.useWristBandTracking = (std::stoi(value) != 0);
+                else if (key == "WristBandFraction") touch.wristBandFraction = std::stof(value);
                 else if (key == "ButtonCount") {
                     int count = std::stoi(value);
                     if (count > 0) touch.buttons.resize(static_cast<size_t>(count));
@@ -295,6 +297,8 @@ bool Config::save(const std::string& filename) {
     file << "MatchMaxDistNorm = " << touch.matchMaxDistNorm << "  # Max normalized distance to accept a fingertip->button match\n";
     file << "AxisFilterAlpha = " << touch.axisFilterAlpha << "  # Dial-rotation angle smoothing: 1.0 = none, smaller = smoother/more lag\n";
     file << "DialTickThresholdDeg = " << touch.dialTickThresholdDeg << "  # Degrees of accumulated rotation per dial tick\n";
+    file << "UseWristBandTracking = " << (touch.useWristBandTracking ? 1 : 0) << "  # Track only the wrist/forearm band instead of the whole hand\n";
+    file << "WristBandFraction = " << touch.wristBandFraction << "  # Fraction of hand extent (near entry edge) counted as the wrist band\n";
     file << "ButtonCount = " << touch.buttons.size() << "\n\n";
     for (size_t i = 0; i < touch.buttons.size(); ++i) {
         const auto& b = touch.buttons[i];

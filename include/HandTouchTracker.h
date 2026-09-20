@@ -52,6 +52,23 @@ cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entr
 float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold = 32,
                                    double minContourArea = 200.0, float* outConfidence = nullptr);
 
+// Like computeHandOrientationAngle(), but restricts the ellipse fit to only the portion of
+// the hand contour within wristBandFraction of the entry edge (see HandEntryEdge) - the
+// wrist/forearm stub, which stays a consistently elongated, stick-like shape whether the
+// fingers are flat or curled around a knob, unlike the whole-hand silhouette that collapses
+// into a compact blob during a grip. Built after real testing found exactly that pattern:
+// the hand has a "distinct shape" near where the arm enters frame even when the
+// fingers/knuckles further in become too compact to fit a reliable axis to.
+//
+// wristBandFraction (0-1): how much of the hand's extent along the entry axis counts as
+// "the wrist band" - e.g. 0.35 means the nearest 35% of the hand's bounding box to the
+// entry edge. Too small risks too few points to fit an ellipse to some frames; too large
+// starts including the same compact finger/knuckle region this function exists to avoid.
+// Same NAN/confidence semantics as computeHandOrientationAngle().
+float computeWristOrientationAngle(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
+                                    float wristBandFraction = 0.35f, int alphaThreshold = 32,
+                                    double minContourArea = 200.0, float* outConfidence = nullptr);
+
 // Signed angular difference from fromAngle to toAngle for a 180-degree-periodic axis angle
 // (see computeHandOrientationAngle), wrapped to (-pi/2, pi/2]. Uses the standard "double
 // the angle, difference, halve it" trick so a rotation crossing the axis's own wrap

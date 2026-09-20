@@ -136,6 +136,16 @@ struct TouchConfig {
     // separately-tuned, larger default. Live-tunable for the same reason axisFilterAlpha
     // is: the right value is found empirically against real footage.
     float dialTickThresholdDeg = 8.0f;
+    // If true, dial-rotation tracking uses computeWristOrientationAngle() (ellipse fit
+    // restricted to just the wrist/forearm band near the entry edge) instead of
+    // computeHandOrientationAngle() (whole-hand silhouette). Built after real testing
+    // found the whole-hand fit degrades badly during a knob grip (fingers curl into a
+    // compact blob) while the wrist/forearm segment stays consistently elongated
+    // regardless of grip. Off by default so existing behavior doesn't silently change.
+    bool useWristBandTracking = false;
+    // How much of the hand's extent along the entry axis counts as "the wrist band" when
+    // useWristBandTracking is on - see computeWristOrientationAngle()'s own comment.
+    float wristBandFraction = 0.35f;
     std::vector<TouchButtonCalibration> buttons;
 };
 

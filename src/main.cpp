@@ -167,6 +167,11 @@ std::vector<std::pair<float, float>> g_autoCalResults;  // (claheValue, avgScore
 // outside an active touch.
 AxisAngleFilter g_axisFilterLeftDiag;
 AxisAngleFilter g_axisFilterRightDiag;
+// Same, but for the wrist-band variant (computeWristOrientationAngle) - kept fully
+// separate so the whole-hand and wrist-band readings can be watched side by side for
+// direct comparison without one influencing the other's filter state.
+AxisAngleFilter g_wristFilterLeftDiag;
+AxisAngleFilter g_wristFilterRightDiag;
 
 // Live, continuously-updated (every frame, independent of any touch event) hand readouts
 // for the Touch Calibration tab's diagnostics section - lets fingertip position and hand
@@ -186,6 +191,13 @@ struct LiveHandDiagnostics {
     // Diagnostic-only: see countTrackableHandFeatures(). -1 = no hand detected that frame.
     int trackableFeaturesLeft = -1;
     int trackableFeaturesRight = -1;
+    // Wrist-band variant of orientation/confidence (computeWristOrientationAngle) - shown
+    // alongside the whole-hand axis for direct comparison, and used for actual dial
+    // tracking instead when config.touch.useWristBandTracking is on.
+    float wristOrientationLeftDeg = std::numeric_limits<float>::quiet_NaN();
+    float wristOrientationRightDeg = std::numeric_limits<float>::quiet_NaN();
+    float wristOrientationLeftConfidence = 0.0f;
+    float wristOrientationRightConfidence = 0.0f;
 };
 LiveHandDiagnostics g_liveHandDiag;
 
@@ -1714,6 +1726,30 @@ void mainLoop() {
                         g_liveHandDiag.orientationRightDeg = filtered * 180.0f / static_cast<float>(CV_PI);
                     }
 
+                    // Wrist-band variant, shown alongside the whole-hand axis above for
+                    // direct comparison - see computeWristOrientationAngle()'s comment.
+                    float wristConfLeft = 0.0f, wristConfRight = 0.0f;
+                    float wristLeft = computeWristOrientationAngle(leftAlpha, diagEdge,
+                        config.touch.wristBandFraction, 32, 200.0, &wristConfLeft);
+                    float wristRight = computeWristOrientationAngle(rightAlpha, diagEdge,
+                        config.touch.wristBandFraction, 32, 200.0, &wristConfRight);
+                    g_liveHandDiag.wristOrientationLeftConfidence = wristConfLeft;
+                    g_liveHandDiag.wristOrientationRightConfidence = wristConfRight;
+                    if (std::isnan(wristLeft)) {
+                        g_wristFilterLeftDiag.reset();
+                        g_liveHandDiag.wristOrientationLeftDeg = wristLeft;
+                    } else {
+                        float filtered = g_wristFilterLeftDiag.update(wristLeft, config.touch.axisFilterAlpha, wristConfLeft);
+                        g_liveHandDiag.wristOrientationLeftDeg = filtered * 180.0f / static_cast<float>(CV_PI);
+                    }
+                    if (std::isnan(wristRight)) {
+                        g_wristFilterRightDiag.reset();
+                        g_liveHandDiag.wristOrientationRightDeg = wristRight;
+                    } else {
+                        float filtered = g_wristFilterRightDiag.update(wristRight, config.touch.axisFilterAlpha, wristConfRight);
+                        g_liveHandDiag.wristOrientationRightDeg = filtered * 180.0f / static_cast<float>(CV_PI);
+                    }
+
                     float dirLeft = computeHandDirectionAngle(leftAlpha, diagEdge);
                     float dirRight = computeHandDirectionAngle(rightAlpha, diagEdge);
                     g_liveHandDiag.directionLeftDeg = std::isnan(dirLeft) ? dirLeft
@@ -1864,8 +1900,12 @@ void mainLoop() {
                                     // long as the touch stays held (see the block below, right
                                     // after glfwPollEvents() reads the joystick each frame).
                                     const cv::Mat& dragMask = result.isLeftEye ? leftAlpha : rightAlpha;
+                                    HandEntryEdge dragEdge = static_cast<HandEntryEdge>(config.touch.entryEdge);
                                     float startConfidence = 0.0f;
-                                    float startAngle = computeHandOrientationAngle(dragMask, 32, 200.0, &startConfidence);
+                                    float startAngle = config.touch.useWristBandTracking
+                                        ? computeWristOrientationAngle(dragMask, dragEdge,
+                                              config.touch.wristBandFraction, 32, 200.0, &startConfidence)
+                                        : computeHandOrientationAngle(dragMask, 32, 200.0, &startConfidence);
                                     if (!std::isnan(startAngle)) {
                                         g_activeDialDrag = ActiveDialDrag();  // fresh filter/angle state each grab
                                         g_activeDialDrag.active = true;
@@ -1928,8 +1968,12 @@ void mainLoop() {
                             g_activeDialDrag = ActiveDialDrag();
                         } else {
                             const cv::Mat& dragMask = g_activeDialDrag.isLeftEye ? leftAlpha : rightAlpha;
+                            HandEntryEdge dragEdge = static_cast<HandEntryEdge>(config.touch.entryEdge);
                             float rawConfidence = 0.0f;
-                            float rawAngle = computeHandOrientationAngle(dragMask, 32, 200.0, &rawConfidence);
+                            float rawAngle = config.touch.useWristBandTracking
+                                ? computeWristOrientationAngle(dragMask, dragEdge,
+                                      config.touch.wristBandFraction, 32, 200.0, &rawConfidence)
+                                : computeHandOrientationAngle(dragMask, 32, 200.0, &rawConfidence);
                             if (!std::isnan(rawAngle)) {
                                 float angle = g_activeDialDrag.filter.update(
                                     rawAngle, config.touch.axisFilterAlpha, rawConfidence);
@@ -2872,6 +2916,27 @@ void mainLoop() {
                                        "turned; lower it if turns feel unresponsive.");
                 }
 
+                ImGui::Checkbox("Use wrist-band tracking for dial rotation", &config.touch.useWristBandTracking);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Fits the axis to only the wrist/forearm portion of the "
+                                       "hand (near where the arm enters frame) instead of the "
+                                       "whole hand silhouette. The forearm stays a consistently "
+                                       "elongated shape whether fingers are flat or curled around "
+                                       "a knob - built after testing found the whole-hand fit "
+                                       "degrades badly specifically during a grip. Compare 'axis' "
+                                       "vs 'wrist axis' below before committing to this.");
+                }
+                if (config.touch.useWristBandTracking) {
+                    ImGui::SetNextItemWidth(150);
+                    ImGui::SliderFloat("Wrist band fraction", &config.touch.wristBandFraction, 0.1f, 0.6f, "%.2f");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("How much of the hand's extent nearest the entry edge "
+                                           "counts as the wrist/forearm band. Too small: too few "
+                                           "points some frames. Too large: starts including the "
+                                           "same compact finger/knuckle region this exists to avoid.");
+                    }
+                }
+
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::Text("Live hand diagnostics (updates every frame, AI Segmentation only):");
@@ -2883,6 +2948,8 @@ void mainLoop() {
                         const cv::Point2f& fingertip = isLeft ? g_liveHandDiag.fingertipLeft : g_liveHandDiag.fingertipRight;
                         float orientation = isLeft ? g_liveHandDiag.orientationLeftDeg : g_liveHandDiag.orientationRightDeg;
                         float orientConfidence = isLeft ? g_liveHandDiag.orientationLeftConfidence : g_liveHandDiag.orientationRightConfidence;
+                        float wristOrientation = isLeft ? g_liveHandDiag.wristOrientationLeftDeg : g_liveHandDiag.wristOrientationRightDeg;
+                        float wristConfidence = isLeft ? g_liveHandDiag.wristOrientationLeftConfidence : g_liveHandDiag.wristOrientationRightConfidence;
                         float direction = isLeft ? g_liveHandDiag.directionLeftDeg : g_liveHandDiag.directionRightDeg;
 
                         ImGui::Text("%s eye:", isLeft ? "Left" : "Right");
@@ -2906,6 +2973,19 @@ void mainLoop() {
                             }
                         } else {
                             ImGui::TextDisabled("| axis: n/a");
+                        }
+                        ImGui::SameLine();
+                        if (!std::isnan(wristOrientation)) {
+                            ImGui::Text("| wrist axis %.1f (conf %.2f)", wristOrientation, wristConfidence);
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Same as 'axis', but fit only to the wrist/forearm "
+                                                   "band near the entry edge, not the whole hand - "
+                                                   "compare its confidence against 'axis' during an "
+                                                   "actual grip. Only used for real dial tracking when "
+                                                   "'Use wrist-band tracking' above is checked.");
+                            }
+                        } else {
+                            ImGui::TextDisabled("| wrist axis: n/a");
                         }
                         ImGui::SameLine();
                         if (!std::isnan(direction)) {

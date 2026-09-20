@@ -54,6 +54,40 @@ cv::Point findExtremePoint(const std::vector<cv::Point>& contour, HandEntryEdge 
     return best;
 }
 
+// Shared by computeWristOrientationAngle(): restricts a hand contour to just the points
+// within wristBandFraction of the entry edge - the wrist/forearm stub, which stays a
+// consistently elongated shape regardless of how the fingers are posed further into frame
+// (flat vs. curled around a knob), unlike the whole-hand silhouette.
+std::vector<cv::Point> restrictToWristBand(const std::vector<cv::Point>& contour,
+                                            HandEntryEdge entryEdge, float wristBandFraction) {
+    if (contour.empty()) return {};
+    cv::Rect bbox = cv::boundingRect(contour);
+    std::vector<cv::Point> band;
+    switch (entryEdge) {
+        case HandEntryEdge::Bottom: {
+            int cutoffY = bbox.y + static_cast<int>(bbox.height * (1.0f - wristBandFraction));
+            for (const auto& pt : contour) if (pt.y >= cutoffY) band.push_back(pt);
+            break;
+        }
+        case HandEntryEdge::Top: {
+            int cutoffY = bbox.y + static_cast<int>(bbox.height * wristBandFraction);
+            for (const auto& pt : contour) if (pt.y <= cutoffY) band.push_back(pt);
+            break;
+        }
+        case HandEntryEdge::Left: {
+            int cutoffX = bbox.x + static_cast<int>(bbox.width * wristBandFraction);
+            for (const auto& pt : contour) if (pt.x <= cutoffX) band.push_back(pt);
+            break;
+        }
+        case HandEntryEdge::Right: {
+            int cutoffX = bbox.x + static_cast<int>(bbox.width * (1.0f - wristBandFraction));
+            for (const auto& pt : contour) if (pt.x >= cutoffX) band.push_back(pt);
+            break;
+        }
+    }
+    return band;
+}
+
 }  // namespace
 
 cv::Point2f findFingertipNormalized(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
@@ -113,6 +147,40 @@ float computeHandOrientationAngle(const cv::Mat& alphaMask, int alphaThreshold,
 
     // OpenCV's RotatedRect::angle is in degrees, range [0, 180) - convert to radians for
     // consistency with the rest of this file.
+    return ellipse.angle * static_cast<float>(CV_PI) / 180.0f;
+}
+
+float computeWristOrientationAngle(const cv::Mat& alphaMask, HandEntryEdge entryEdge,
+                                    float wristBandFraction, int alphaThreshold,
+                                    double minContourArea, float* outConfidence) {
+    if (alphaMask.empty()) {
+        if (outConfidence) *outConfidence = 0.0f;
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+
+    std::vector<cv::Point> contour = findHandContour(alphaMask, alphaThreshold, minContourArea);
+    if (contour.empty()) {
+        if (outConfidence) *outConfidence = 0.0f;
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+
+    std::vector<cv::Point> band = restrictToWristBand(contour, entryEdge, wristBandFraction);
+    // fitEllipse requires at least 5 points.
+    if (band.size() < 5) {
+        if (outConfidence) *outConfidence = 0.0f;
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+
+    cv::RotatedRect ellipse = cv::fitEllipse(band);
+
+    if (outConfidence) {
+        float w = ellipse.size.width;
+        float h = ellipse.size.height;
+        float major = (w > h) ? w : h;
+        float minor = (w > h) ? h : w;
+        *outConfidence = (major > 0.0f) ? (1.0f - (minor / major)) : 0.0f;
+    }
+
     return ellipse.angle * static_cast<float>(CV_PI) / 180.0f;
 }
 
